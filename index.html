@@ -4,8 +4,11 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Mapbox PMGeo</title>
-    <!-- Mapbox CSS (served from node_modules when using a static server) -->
-    <link rel="stylesheet" href="node_modules/mapbox-gl/dist/mapbox-gl.css" />
+    <!-- Mapbox CSS from CDN for production deployments -->
+    <link
+      rel="stylesheet"
+      href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css"
+    />
     <style>
       body, html, #map { height: 100%; margin: 0; padding: 0; }
       #map { width: 100%; }
@@ -19,8 +22,8 @@
   <body>
     <div id="map"></div>
 
-    <!-- Mapbox JS (served from node_modules when using a static server) -->
-    <script src="node_modules/mapbox-gl/dist/mapbox-gl.js"></script>
+    <!-- Mapbox JS from CDN for production deployments -->
+    <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
     <script src="map.js"></script>
   </body>
 </html>
