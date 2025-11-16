@@ -23,6 +23,8 @@ let accessIconLoaded = false;
 let accessPointsFeatures = [];
 let accessPointsReady = false;
 let lastUserLocation = null;
+let nearestAccessVisible = true;
+let nearestAccessFeature = null;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -74,6 +76,13 @@ function applyAccessPointsVisibility() {
   });
 }
 
+function applyNearestAccessVisibility() {
+  const visibility = nearestAccessVisible ? 'visible' : 'none';
+  if (map.getLayer('nearest-access-layer')) {
+    map.setLayoutProperty('nearest-access-layer', 'visibility', visibility);
+  }
+}
+
 function haversineDistance(lngLat1, lngLat2) {
   const toRad = (deg) => (deg * Math.PI) / 180;
   const [lon1, lat1] = lngLat1;
@@ -86,6 +95,32 @@ function haversineDistance(lngLat1, lngLat2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+function ensureNearestAccessLayer() {
+  if (!map.getSource('nearest-access')) {
+    map.addSource('nearest-access', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  }
+  if (!map.getLayer('nearest-access-layer')) {
+    const iconName = map.hasImage('access-icon')
+      ? 'access-icon'
+      : map.hasImage('milepost-icon')
+      ? 'milepost-icon'
+      : 'marker-15';
+    map.addLayer({
+      id: 'nearest-access-layer',
+      type: 'symbol',
+      source: 'nearest-access',
+      minzoom: 10,
+      layout: {
+        'icon-image': iconName,
+        'icon-size': 0.42, // slightly larger highlight
+        'icon-pitch-scale': 'viewport',
+        'icon-allow-overlap': true
+      }
+    });
+  }
+  applyNearestAccessVisibility();
 }
 
 function showNearestAccessPoint(userLngLat) {
@@ -116,6 +151,17 @@ function showNearestAccessPoint(userLngLat) {
     .addTo(map);
 
   map.easeTo({ center: best.geometry.coordinates, zoom: Math.max(map.getZoom(), 14) });
+
+  nearestAccessFeature = best;
+  ensureNearestAccessLayer();
+  const source = map.getSource('nearest-access');
+  if (source) {
+    source.setData({
+      type: 'FeatureCollection',
+      features: [best]
+    });
+  }
+  applyNearestAccessVisibility();
 }
 
 function addMilepostToggleControl() {
@@ -152,10 +198,27 @@ function addMilepostToggleControl() {
   apLabel.textContent = 'Show access points';
   apLabel.style.marginLeft = '6px';
 
+  const nearestCheckbox = document.createElement('input');
+  nearestCheckbox.type = 'checkbox';
+  nearestCheckbox.id = 'nearest-access-toggle';
+  nearestCheckbox.checked = nearestAccessVisible;
+  nearestCheckbox.style.marginLeft = '12px';
+  nearestCheckbox.addEventListener('change', () => {
+    nearestAccessVisible = nearestCheckbox.checked;
+    applyNearestAccessVisibility();
+  });
+
+  const nearestLabel = document.createElement('label');
+  nearestLabel.setAttribute('for', 'nearest-access-toggle');
+  nearestLabel.textContent = 'Show nearest access point';
+  nearestLabel.style.marginLeft = '6px';
+
   container.appendChild(checkbox);
   container.appendChild(label);
   container.appendChild(apCheckbox);
   container.appendChild(apLabel);
+  container.appendChild(nearestCheckbox);
+  container.appendChild(nearestLabel);
   map.getContainer().appendChild(container);
 }
 
