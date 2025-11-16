@@ -18,6 +18,7 @@ map.addControl(new mapboxgl.NavigationControl());
 
 let milepostIconLoaded = false;
 let milepostVisible = true;
+let accessPointsVisible = true;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -37,7 +38,16 @@ async function ensureMilepostIcon() {
 
 function applyMilepostVisibility() {
   const visibility = milepostVisible ? 'visible' : 'none';
-  ['mileposts-layer', 'mileage-csv-layer', 'access-points-layer'].forEach((layerId) => {
+  ['mileposts-layer', 'mileage-csv-layer'].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, 'visibility', visibility);
+    }
+  });
+}
+
+function applyAccessPointsVisibility() {
+  const visibility = accessPointsVisible ? 'visible' : 'none';
+  ['access-points-layer'].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
@@ -63,8 +73,25 @@ function addMilepostToggleControl() {
   label.textContent = 'Show mileposts';
   label.style.marginLeft = '6px';
 
+  const apCheckbox = document.createElement('input');
+  apCheckbox.type = 'checkbox';
+  apCheckbox.id = 'accesspoints-toggle';
+  apCheckbox.checked = accessPointsVisible;
+  apCheckbox.style.marginLeft = '12px';
+  apCheckbox.addEventListener('change', () => {
+    accessPointsVisible = apCheckbox.checked;
+    applyAccessPointsVisibility();
+  });
+
+  const apLabel = document.createElement('label');
+  apLabel.setAttribute('for', 'accesspoints-toggle');
+  apLabel.textContent = 'Show access points';
+  apLabel.style.marginLeft = '6px';
+
   container.appendChild(checkbox);
   container.appendChild(label);
+  container.appendChild(apCheckbox);
+  container.appendChild(apLabel);
   map.getContainer().appendChild(container);
 }
 
@@ -233,9 +260,9 @@ async function loadMileageCsv() {
         'icon-image': iconName,
         'icon-size': 0.28, // smaller marker
         'icon-pitch-scale': 'viewport',
-        'icon-allow-overlap': true
-      }
-    });
+      'icon-allow-overlap': true
+    }
+  });
     applyMilepostVisibility();
 
     map.on('click', 'mileage-csv-layer', (event) => {
@@ -286,7 +313,7 @@ async function loadAccessPointsCsv() {
         'icon-allow-overlap': true
       }
     });
-    applyMilepostVisibility(); // re-use visibility function for consistency if toggle is used
+    applyAccessPointsVisibility();
 
     map.on('click', 'access-points-layer', (event) => {
       const feature = event.features?.[0];
