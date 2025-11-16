@@ -95,11 +95,12 @@ async function loadMileagePoints() {
   const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
   map.addLayer({
     id: 'mileposts-layer',
-      type: 'symbol',
-      source: 'mileposts',
-      layout: {
-        'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
-        'icon-size': 0.55, // half size for a smaller marker
+    type: 'symbol',
+    source: 'mileposts',
+    minzoom: 13, // only show when zoomed in
+    layout: {
+      'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
+      'icon-size': 0.55, // half size for a smaller marker
       'icon-pitch-scale': 'viewport', // keep icon size consistent when zooming/pitching
       'icon-allow-overlap': true
     }
@@ -188,11 +189,12 @@ async function loadMileageCsv() {
   const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
   map.addLayer({
     id: 'mileage-csv-layer',
-      type: 'symbol',
-      source: 'mileage-csv',
-      layout: {
-        'icon-image': iconName,
-        'icon-size': 0.55, // half size for a smaller marker
+    type: 'symbol',
+    source: 'mileage-csv',
+    minzoom: 13,
+    layout: {
+      'icon-image': iconName,
+      'icon-size': 0.55, // half size for a smaller marker
       'icon-pitch-scale': 'viewport',
       'icon-allow-overlap': true
     }
