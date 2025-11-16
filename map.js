@@ -331,7 +331,7 @@ async function loadAccessPointsCsv() {
       minzoom: 13,
       layout: {
         'icon-image': iconName,
-        'icon-size': 0.28,
+        'icon-size': 0.36, // 30% larger than milepost icon (0.28)
         'icon-pitch-scale': 'viewport',
         'icon-allow-overlap': true
       }
