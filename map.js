@@ -20,6 +20,9 @@ let milepostIconLoaded = false;
 let milepostVisible = true;
 let accessPointsVisible = true;
 let accessIconLoaded = false;
+let accessPointsFeatures = [];
+let accessPointsReady = false;
+let lastUserLocation = null;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -69,6 +72,50 @@ function applyAccessPointsVisibility() {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
   });
+}
+
+function haversineDistance(lngLat1, lngLat2) {
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const [lon1, lat1] = lngLat1;
+  const [lon2, lat2] = lngLat2;
+  const R = 6371000; // meters
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+function showNearestAccessPoint(userLngLat) {
+  if (!accessPointsFeatures.length) return;
+  let best = null;
+  let bestDist = Infinity;
+  for (const feature of accessPointsFeatures) {
+    const coords = feature.geometry?.coordinates;
+    if (!coords) continue;
+    const dist = haversineDistance(userLngLat, coords);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = feature;
+    }
+  }
+  if (!best) return;
+
+  const { ELR, mileage, name, type } = best.properties || {};
+  new mapboxgl.Popup()
+    .setLngLat(best.geometry.coordinates)
+    .setHTML(
+      `<strong>${name || 'Access Point'}</strong><br/>
+       <strong>Type:</strong> ${type || 'N/A'}<br/>
+       <strong>ELR:</strong> ${ELR || 'N/A'}<br/>
+       <strong>Mileage:</strong> ${mileage || 'N/A'}<br/>
+       <strong>Distance:</strong> ${(bestDist / 1000).toFixed(2)} km`
+    )
+    .addTo(map);
+
+  map.easeTo({ center: best.geometry.coordinates, zoom: Math.max(map.getZoom(), 14) });
 }
 
 function addMilepostToggleControl() {
@@ -122,6 +169,12 @@ const geolocate = new mapboxgl.GeolocateControl({
 });
 
 map.addControl(geolocate);
+geolocate.on('geolocate', (event) => {
+  lastUserLocation = [event.coords.longitude, event.coords.latitude];
+  if (accessPointsReady) {
+    showNearestAccessPoint(lastUserLocation);
+  }
+});
 
 async function loadMileagePoints() {
   try {
@@ -315,6 +368,7 @@ async function loadAccessPointsCsv() {
 
     const csvText = await response.text();
     const geojson = csvToAccessPointsGeoJSON(csvText);
+    accessPointsFeatures = geojson.features || [];
 
     await ensureAccessIcon();
 
@@ -359,6 +413,11 @@ async function loadAccessPointsCsv() {
     map.on('mouseleave', 'access-points-layer', () => {
       map.getCanvas().style.cursor = '';
     });
+
+    accessPointsReady = true;
+    if (lastUserLocation) {
+      showNearestAccessPoint(lastUserLocation);
+    }
   } catch (error) {
     console.error('Unable to load access points CSV:', error);
   }
