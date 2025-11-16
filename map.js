@@ -23,8 +23,9 @@ let accessIconLoaded = false;
 let accessPointsFeatures = [];
 let accessPointsReady = false;
 let lastUserLocation = null;
-let nearestAccessVisible = true;
+let nearestAccessVisible = false; // default off
 let nearestAccessFeature = null;
+let nearestAccessShown = false;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -125,6 +126,7 @@ function ensureNearestAccessLayer() {
 
 function showNearestAccessPoint(userLngLat) {
   if (!accessPointsFeatures.length) return;
+  if (nearestAccessShown) return; // only jump/open once per toggle
   let best = null;
   let bestDist = Infinity;
   for (const feature of accessPointsFeatures) {
@@ -153,6 +155,7 @@ function showNearestAccessPoint(userLngLat) {
   map.easeTo({ center: best.geometry.coordinates, zoom: Math.max(map.getZoom(), 14) });
 
   nearestAccessFeature = best;
+  nearestAccessShown = true;
   ensureNearestAccessLayer();
   const source = map.getSource('nearest-access');
   if (source) {
@@ -205,6 +208,12 @@ function addMilepostToggleControl() {
   nearestCheckbox.style.marginLeft = '12px';
   nearestCheckbox.addEventListener('change', () => {
     nearestAccessVisible = nearestCheckbox.checked;
+    if (nearestAccessVisible) {
+      nearestAccessShown = false; // allow one jump after toggling on
+      if (accessPointsReady && lastUserLocation) {
+        showNearestAccessPoint(lastUserLocation);
+      }
+    }
     applyNearestAccessVisibility();
   });
 
@@ -234,7 +243,7 @@ const geolocate = new mapboxgl.GeolocateControl({
 map.addControl(geolocate);
 geolocate.on('geolocate', (event) => {
   lastUserLocation = [event.coords.longitude, event.coords.latitude];
-  if (accessPointsReady) {
+  if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
     showNearestAccessPoint(lastUserLocation);
   }
 });
@@ -478,7 +487,7 @@ async function loadAccessPointsCsv() {
     });
 
     accessPointsReady = true;
-    if (lastUserLocation) {
+    if (nearestAccessVisible && !nearestAccessShown && lastUserLocation) {
       showNearestAccessPoint(lastUserLocation);
     }
   } catch (error) {
