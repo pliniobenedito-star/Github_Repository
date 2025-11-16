@@ -117,7 +117,8 @@ function ensureNearestAccessLayer() {
         'icon-image': iconName,
         'icon-size': 0.42, // slightly larger highlight
         'icon-pitch-scale': 'viewport',
-        'icon-allow-overlap': true
+        'icon-allow-overlap': true,
+        'visibility': nearestAccessVisible ? 'visible' : 'none'
       }
     });
   }
