@@ -82,6 +82,12 @@ function applyNearestAccessVisibility() {
   if (map.getLayer('nearest-access-layer')) {
     map.setLayoutProperty('nearest-access-layer', 'visibility', visibility);
   }
+  if (!nearestAccessVisible) {
+    const source = map.getSource('nearest-access');
+    if (source) {
+      source.setData({ type: 'FeatureCollection', features: [] });
+    }
+  }
 }
 
 function haversineDistance(lngLat1, lngLat2) {
@@ -99,6 +105,10 @@ function haversineDistance(lngLat1, lngLat2) {
 }
 
 function ensureNearestAccessLayer() {
+  if (!nearestAccessVisible) {
+    applyNearestAccessVisibility();
+    return;
+  }
   if (!map.getSource('nearest-access')) {
     map.addSource('nearest-access', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   }
@@ -126,6 +136,7 @@ function ensureNearestAccessLayer() {
 }
 
 function showNearestAccessPoint(userLngLat) {
+  if (!nearestAccessVisible) return;
   if (!accessPointsFeatures.length) return;
   if (nearestAccessShown) return; // only jump/open once per toggle
   let best = null;
@@ -209,9 +220,13 @@ function addMilepostToggleControl() {
     nearestAccessVisible = nearestCheckbox.checked;
     if (nearestAccessVisible) {
       nearestAccessShown = false; // allow one jump after toggling on
+      ensureNearestAccessLayer();
       if (accessPointsReady && lastUserLocation) {
         showNearestAccessPoint(lastUserLocation);
       }
+    } else {
+      nearestAccessShown = false;
+      applyNearestAccessVisibility();
     }
     applyNearestAccessVisibility();
   });
