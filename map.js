@@ -37,7 +37,7 @@ async function ensureMilepostIcon() {
 
 function applyMilepostVisibility() {
   const visibility = milepostVisible ? 'visible' : 'none';
-  ['mileposts-layer', 'mileage-csv-layer'].forEach((layerId) => {
+  ['mileposts-layer', 'mileage-csv-layer', 'access-points-layer'].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
