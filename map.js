@@ -139,6 +139,7 @@ map.on('load', () => {
   ensureMilepostIcon().finally(() => {
     loadMileagePoints();
     loadMileageCsv();
+    loadAccessPointsCsv();
   });
   addMilepostToggleControl();
 });
@@ -169,6 +170,42 @@ function csvToGeoJSON(csvText) {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [lon, lat] },
       properties: { ELR: values[idx.elr] ?? 'N/A', mileage }
+    });
+  }
+
+  return { type: 'FeatureCollection', features };
+}
+
+// Convert Access Points CSV (elr,mileage,name,type,lat,lon) into GeoJSON.
+function csvToAccessPointsGeoJSON(csvText) {
+  const lines = csvText.trim().split(/\r?\n/);
+  const headers = lines.shift()?.split(',').map((h) => h.trim().toLowerCase()) ?? [];
+  const idx = {
+    elr: headers.indexOf('elr'),
+    mileage: headers.indexOf('mileage'),
+    name: headers.indexOf('name'),
+    type: headers.indexOf('type'),
+    lat: headers.indexOf('lat'),
+    lon: headers.indexOf('lon')
+  };
+
+  const features = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const values = line.split(',').map((v) => v.trim());
+    const lat = parseFloat(values[idx.lat]);
+    const lon = parseFloat(values[idx.lon]);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
+
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [lon, lat] },
+      properties: {
+        ELR: values[idx.elr] ?? 'N/A',
+        mileage: values[idx.mileage] ?? 'N/A',
+        name: values[idx.name] ?? 'N/A',
+        type: values[idx.type] ?? 'N/A'
+      }
     });
   }
 
@@ -223,5 +260,56 @@ async function loadMileageCsv() {
     });
   } catch (error) {
     console.error('Unable to load mileage CSV:', error);
+  }
+}
+
+// Load Access Points from CSV.
+async function loadAccessPointsCsv() {
+  try {
+    const response = await fetch('access-points.csv');
+    if (!response.ok) throw new Error(`Failed to fetch access points CSV (${response.status})`);
+
+    const csvText = await response.text();
+    const geojson = csvToAccessPointsGeoJSON(csvText);
+
+    map.addSource('access-points', { type: 'geojson', data: geojson });
+    const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
+    map.addLayer({
+      id: 'access-points-layer',
+      type: 'symbol',
+      source: 'access-points',
+      minzoom: 13,
+      layout: {
+        'icon-image': iconName,
+        'icon-size': 0.28,
+        'icon-pitch-scale': 'viewport',
+        'icon-allow-overlap': true
+      }
+    });
+    applyMilepostVisibility(); // re-use visibility function for consistency if toggle is used
+
+    map.on('click', 'access-points-layer', (event) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+      const { ELR, mileage, name, type } = feature.properties || {};
+      new mapboxgl.Popup()
+        .setLngLat(event.lngLat)
+        .setHTML(
+          `<strong>${name || 'Access Point'}</strong><br/>
+           <strong>Type:</strong> ${type || 'N/A'}<br/>
+           <strong>ELR:</strong> ${ELR || 'N/A'}<br/>
+           <strong>Mileage:</strong> ${mileage || 'N/A'}`
+        )
+        .addTo(map);
+    });
+
+    map.on('mouseenter', 'access-points-layer', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'access-points-layer', () => {
+      map.getCanvas().style.cursor = '';
+    });
+  } catch (error) {
+    console.error('Unable to load access points CSV:', error);
   }
 }
