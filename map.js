@@ -17,6 +17,7 @@ const map = new mapboxgl.Map({
 map.addControl(new mapboxgl.NavigationControl());
 
 let milepostIconLoaded = false;
+let milepostVisible = true;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -32,6 +33,39 @@ async function ensureMilepostIcon() {
       resolve();
     });
   });
+}
+
+function applyMilepostVisibility() {
+  const visibility = milepostVisible ? 'visible' : 'none';
+  ['mileposts-layer', 'mileage-csv-layer'].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, 'visibility', visibility);
+    }
+  });
+}
+
+function addMilepostToggleControl() {
+  const container = document.createElement('div');
+  container.style.cssText =
+    'position:absolute;top:10px;left:10px;z-index:1;background:#fff;padding:8px 10px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,0.2);font-family:sans-serif;font-size:13px;';
+
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.id = 'milepost-toggle';
+  checkbox.checked = milepostVisible;
+  checkbox.addEventListener('change', () => {
+    milepostVisible = checkbox.checked;
+    applyMilepostVisibility();
+  });
+
+  const label = document.createElement('label');
+  label.setAttribute('for', 'milepost-toggle');
+  label.textContent = 'Show mileposts';
+  label.style.marginLeft = '6px';
+
+  container.appendChild(checkbox);
+  container.appendChild(label);
+  map.getContainer().appendChild(container);
 }
 
 // Add geolocate control to the map.
@@ -61,14 +95,16 @@ async function loadMileagePoints() {
   const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
   map.addLayer({
     id: 'mileposts-layer',
-    type: 'symbol',
-    source: 'mileposts',
-    layout: {
-      'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
-      'icon-size': 0.55, // half size for a smaller marker
+      type: 'symbol',
+      source: 'mileposts',
+      layout: {
+        'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
+        'icon-size': 0.55, // half size for a smaller marker
+      'icon-pitch-scale': 'viewport', // keep icon size consistent when zooming/pitching
       'icon-allow-overlap': true
     }
   });
+    applyMilepostVisibility();
 
     map.on('click', 'mileposts-layer', (event) => {
       const feature = event.features?.[0];
@@ -103,6 +139,7 @@ map.on('load', () => {
     loadMileagePoints();
     loadMileageCsv();
   });
+  addMilepostToggleControl();
 });
 
 // Utility: Convert the simple mileage CSV (elr,mileage,lat,lon) into GeoJSON.
@@ -151,14 +188,16 @@ async function loadMileageCsv() {
   const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
   map.addLayer({
     id: 'mileage-csv-layer',
-    type: 'symbol',
-    source: 'mileage-csv',
-    layout: {
-      'icon-image': iconName,
-      'icon-size': 0.55, // half size for a smaller marker
+      type: 'symbol',
+      source: 'mileage-csv',
+      layout: {
+        'icon-image': iconName,
+        'icon-size': 0.55, // half size for a smaller marker
+      'icon-pitch-scale': 'viewport',
       'icon-allow-overlap': true
     }
   });
+    applyMilepostVisibility();
 
     map.on('click', 'mileage-csv-layer', (event) => {
       const feature = event.features?.[0];
