@@ -19,6 +19,7 @@ map.addControl(new mapboxgl.NavigationControl());
 let milepostIconLoaded = false;
 let milepostVisible = true;
 let accessPointsVisible = true;
+let accessIconLoaded = false;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -31,6 +32,22 @@ async function ensureMilepostIcon() {
       }
       map.addImage('milepost-icon', image);
       milepostIconLoaded = true;
+      resolve();
+    });
+  });
+}
+
+async function ensureAccessIcon() {
+  if (accessIconLoaded || map.hasImage('access-icon')) return;
+
+  return new Promise((resolve) => {
+    map.loadImage('access-icon.png', (error, image) => {
+      if (error || !image) {
+        console.warn('Unable to load access point icon (access-icon.png); falling back to default marker.', error);
+        return resolve();
+      }
+      map.addImage('access-icon', image);
+      accessIconLoaded = true;
       resolve();
     });
   });
@@ -299,8 +316,14 @@ async function loadAccessPointsCsv() {
     const csvText = await response.text();
     const geojson = csvToAccessPointsGeoJSON(csvText);
 
+    await ensureAccessIcon();
+
     map.addSource('access-points', { type: 'geojson', data: geojson });
-    const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
+    const iconName = map.hasImage('access-icon')
+      ? 'access-icon'
+      : map.hasImage('milepost-icon')
+      ? 'milepost-icon'
+      : 'marker-15';
     map.addLayer({
       id: 'access-points-layer',
       type: 'symbol',
