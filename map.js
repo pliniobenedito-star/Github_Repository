@@ -65,7 +65,7 @@ async function loadMileagePoints() {
     source: 'mileposts',
     layout: {
       'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
-      'icon-size': 1.1,
+      'icon-size': 0.55, // half size for a smaller marker
       'icon-allow-overlap': true
     }
   });
@@ -155,7 +155,7 @@ async function loadMileageCsv() {
     source: 'mileage-csv',
     layout: {
       'icon-image': iconName,
-      'icon-size': 1.1,
+      'icon-size': 0.55, // half size for a smaller marker
       'icon-allow-overlap': true
     }
   });
