@@ -152,8 +152,6 @@ function showNearestAccessPoint(userLngLat) {
     )
     .addTo(map);
 
-  map.easeTo({ center: best.geometry.coordinates, zoom: Math.max(map.getZoom(), 14) });
-
   nearestAccessFeature = best;
   nearestAccessShown = true;
   ensureNearestAccessLayer();
