@@ -16,6 +16,24 @@ const map = new mapboxgl.Map({
 // Add a default navigation control (zoom buttons)
 map.addControl(new mapboxgl.NavigationControl());
 
+let milepostIconLoaded = false;
+
+async function ensureMilepostIcon() {
+  if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
+
+  return new Promise((resolve) => {
+    map.loadImage('mp-icon.png', (error, image) => {
+      if (error || !image) {
+        console.warn('Unable to load custom milepost icon (mp-icon.png); falling back to default marker.', error);
+        return resolve();
+      }
+      map.addImage('milepost-icon', image);
+      milepostIconLoaded = true;
+      resolve();
+    });
+  });
+}
+
 // Add geolocate control to the map.
 const geolocate = new mapboxgl.GeolocateControl({
   positionOptions: {
@@ -40,16 +58,15 @@ async function loadMileagePoints() {
       data: geojson
     });
 
+    const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
     map.addLayer({
       id: 'mileposts-layer',
-      type: 'circle',
+      type: 'symbol',
       source: 'mileposts',
-      paint: {
-        'circle-radius': 4,
-        'circle-color': '#ff5a1f',
-        'circle-opacity': 0.75,
-        'circle-stroke-width': 1,
-        'circle-stroke-color': '#ffffff'
+      layout: {
+        'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
+        'icon-size': 1.1,
+        'icon-allow-overlap': true
       }
     });
 
@@ -79,9 +96,10 @@ async function loadMileagePoints() {
   }
 }
 
-map.on('load', () => {
+map.on('load', async () => {
   console.log('Map loaded');
   geolocate.trigger(); // Automatically trigger location search on map load
+  await ensureMilepostIcon();
   loadMileagePoints();
   loadMileageCsv();
 });
@@ -129,16 +147,15 @@ async function loadMileageCsv() {
     const geojson = csvToGeoJSON(csvText);
 
     map.addSource('mileage-csv', { type: 'geojson', data: geojson });
+    const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
     map.addLayer({
       id: 'mileage-csv-layer',
-      type: 'circle',
+      type: 'symbol',
       source: 'mileage-csv',
-      paint: {
-        'circle-radius': 4,
-        'circle-color': '#1f7cff',
-        'circle-opacity': 0.75,
-        'circle-stroke-width': 1,
-        'circle-stroke-color': '#ffffff'
+      layout: {
+        'icon-image': iconName,
+        'icon-size': 1.1,
+        'icon-allow-overlap': true
       }
     });
 
