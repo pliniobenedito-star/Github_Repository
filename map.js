@@ -19,6 +19,7 @@ map.addControl(new mapboxgl.NavigationControl());
 let milepostIconLoaded = false;
 let milepostVisible = true;
 let accessPointsVisible = true;
+let railLinesVisible = true;
 let accessIconLoaded = false;
 let accessPointsFeatures = [];
 let accessPointsReady = false;
@@ -75,6 +76,13 @@ function applyAccessPointsVisibility() {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
   });
+}
+
+function applyRailLinesVisibility() {
+  const visibility = railLinesVisible ? 'visible' : 'none';
+  if (map.getLayer('rail-reference-lines-layer')) {
+    map.setLayoutProperty('rail-reference-lines-layer', 'visibility', visibility);
+  }
 }
 
 function applyNearestAccessVisibility() {
@@ -236,12 +244,29 @@ function addMilepostToggleControl() {
   nearestLabel.textContent = 'Show nearest access point';
   nearestLabel.style.marginLeft = '6px';
 
+  const railLinesCheckbox = document.createElement('input');
+  railLinesCheckbox.type = 'checkbox';
+  railLinesCheckbox.id = 'rail-reference-lines-toggle';
+  railLinesCheckbox.checked = railLinesVisible;
+  railLinesCheckbox.style.marginLeft = '12px';
+  railLinesCheckbox.addEventListener('change', () => {
+    railLinesVisible = railLinesCheckbox.checked;
+    applyRailLinesVisibility();
+  });
+
+  const railLinesLabel = document.createElement('label');
+  railLinesLabel.setAttribute('for', 'rail-reference-lines-toggle');
+  railLinesLabel.textContent = 'Show reference lines';
+  railLinesLabel.style.marginLeft = '6px';
+
   container.appendChild(checkbox);
   container.appendChild(label);
   container.appendChild(apCheckbox);
   container.appendChild(apLabel);
   container.appendChild(nearestCheckbox);
   container.appendChild(nearestLabel);
+  container.appendChild(railLinesCheckbox);
+  container.appendChild(railLinesLabel);
   map.getContainer().appendChild(container);
 }
 
@@ -261,6 +286,53 @@ geolocate.on('geolocate', (event) => {
     showNearestAccessPoint(lastUserLocation);
   }
 });
+
+function reprojectRailGeoJSONToWgs84(geojson) {
+  if (typeof window === 'undefined' || !window.proj4) {
+    console.warn('proj4 is not available; rail reference lines will not be reprojected.');
+    return geojson;
+  }
+
+  if (!window.proj4.defs('EPSG:27700')) {
+    window.proj4.defs(
+      'EPSG:27700',
+      '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs +type=crs'
+    );
+    console.log('Defined proj4 EPSG:27700');
+  }
+
+  const toLonLat = (coord) => {
+    const [x, y] = coord;
+    const [lon, lat] = window.proj4('EPSG:27700', 'EPSG:4326', [x, y]);
+    return [lon, lat];
+  };
+
+  const convertCoordinates = (coordinates, type) => {
+    if (type === 'LineString') {
+      return coordinates.map(toLonLat);
+    }
+    if (type === 'MultiLineString') {
+      return coordinates.map((line) => line.map(toLonLat));
+    }
+    return coordinates;
+  };
+
+  return {
+    ...geojson,
+    features: (geojson.features || []).map((feature) => {
+      if (!feature?.geometry?.coordinates) {
+        return feature;
+      }
+      return {
+        ...feature,
+        geometry: {
+          ...feature.geometry,
+          coordinates: convertCoordinates(feature.geometry.coordinates, feature.geometry.type)
+        }
+      };
+    })
+  };
+}
 
 async function loadMileagePoints() {
   try {
@@ -316,6 +388,112 @@ async function loadMileagePoints() {
   }
 }
 
+async function loadRailReferenceLines() {
+  try {
+    console.log('Loading rail reference lines…');
+    const response = await fetch('/Rail_reference_line.geojson');
+    if (!response.ok) {
+      throw new Error(`Failed to fetch rail reference lines (${response.status})`);
+    }
+    const rawGeojson = await response.json();
+    const geojson = reprojectRailGeoJSONToWgs84(rawGeojson);
+    const featureCount = (geojson.features || []).length;
+    console.log(`Rail reference lines loaded: ${featureCount} features`);
+
+    map.addSource('rail-reference-lines', {
+      type: 'geojson',
+      data: geojson
+    });
+
+    map.addLayer({
+      id: 'rail-reference-lines-layer',
+      type: 'line',
+      source: 'rail-reference-lines',
+      layout: {
+        'line-cap': 'round',
+        'line-join': 'round'
+      },
+      paint: {
+        'line-color': '#ff0000',
+        'line-width': [
+          'interpolate',
+          ['linear'],
+          ['zoom'],
+          8,
+          3,
+          12,
+          5,
+          16,
+          8
+        ],
+        'line-opacity': 1
+      }
+    });
+    applyRailLinesVisibility();
+
+    // Fit the map to the rail line extent once on load so it's easier to find.
+    const bbox = (geojson.features || []).reduce(
+      (acc, feature) => {
+        const coords = feature.geometry?.coordinates;
+        const type = feature.geometry?.type;
+        if (!coords || !type) return acc;
+
+        const extend = (lon, lat) => {
+          if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+          acc[0][0] = Math.min(acc[0][0], lon);
+          acc[0][1] = Math.min(acc[0][1], lat);
+          acc[1][0] = Math.max(acc[1][0], lon);
+          acc[1][1] = Math.max(acc[1][1], lat);
+        };
+
+        const walk = (c) => {
+          if (typeof c[0] === 'number') {
+            extend(c[0], c[1]);
+          } else {
+            c.forEach(walk);
+          }
+        };
+
+        walk(coords);
+        return acc;
+      },
+      [
+        [Infinity, Infinity],
+        [-Infinity, -Infinity]
+      ]
+    );
+
+    if (Number.isFinite(bbox[0][0]) && Number.isFinite(bbox[1][0])) {
+      map.fitBounds(bbox, { padding: 40, maxZoom: 12 });
+    } else {
+      console.warn('Rail reference lines bbox could not be computed.');
+    }
+
+    map.on('click', 'rail-reference-lines-layer', (event) => {
+      const feature = event.features?.[0];
+      if (!feature) return;
+      const { ELR, L_M_FROM, L_M_TO } = feature.properties || {};
+      new mapboxgl.Popup()
+        .setLngLat(event.lngLat)
+        .setHTML(
+          `<strong>ELR:</strong> ${ELR || 'N/A'}<br/>
+           <strong>Mileage from:</strong> ${L_M_FROM ?? 'N/A'}<br/>
+           <strong>Mileage to:</strong> ${L_M_TO ?? 'N/A'}`
+        )
+        .addTo(map);
+    });
+
+    map.on('mouseenter', 'rail-reference-lines-layer', () => {
+      map.getCanvas().style.cursor = 'pointer';
+    });
+    map.on('mouseleave', 'rail-reference-lines-layer', () => {
+      map.getCanvas().style.cursor = '';
+    });
+  } catch (error) {
+    console.error('Unable to load rail reference lines:', error);
+  }
+}
+
 map.on('load', () => {
   console.log('Map loaded');
   geolocate.trigger(); // Automatically trigger location search on map load
@@ -323,6 +501,7 @@ map.on('load', () => {
     loadMileagePoints();
     loadMileageCsv();
     loadAccessPointsCsv();
+    loadRailReferenceLines();
   });
   addMilepostToggleControl();
 });
