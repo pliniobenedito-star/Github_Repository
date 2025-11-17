@@ -80,9 +80,11 @@ function applyAccessPointsVisibility() {
 
 function applyRailLinesVisibility() {
   const visibility = railLinesVisible ? 'visible' : 'none';
-  if (map.getLayer('rail-reference-lines-layer')) {
-    map.setLayoutProperty('rail-reference-lines-layer', 'visibility', visibility);
-  }
+  ['rail-reference-lines-layer', 'rail-reference-lines-label'].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(layerId, 'visibility', visibility);
+    }
+  });
 }
 
 function applyNearestAccessVisibility() {
@@ -334,6 +336,88 @@ function reprojectRailGeoJSONToWgs84(geojson) {
   };
 }
 
+// Utility: approximate a mileage at a clicked point along a line/multiline
+function mileageAtLocation(feature, lngLat) {
+  const props = feature?.properties || {};
+  const startMileage = Number(props.L_M_FROM ?? props.l_m_from);
+  const endMileage = Number(props.L_M_TO ?? props.l_m_to);
+  if (!Number.isFinite(startMileage) || !Number.isFinite(endMileage)) {
+    return null;
+  }
+
+  const toMeters = ([lon, lat]) => {
+    const R = 6378137;
+    const x = (lon * Math.PI * R) / 180;
+    const y = R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+    return [x, y];
+  };
+
+  const flattenLines = (geometry) => {
+    if (!geometry) return [];
+    if (geometry.type === 'LineString') return [geometry.coordinates];
+    if (geometry.type === 'MultiLineString') return geometry.coordinates;
+    return [];
+  };
+
+  const lineStrings = flattenLines(feature.geometry);
+  if (!lineStrings.length) return null;
+
+  let totalLength = 0;
+  const segments = [];
+
+  for (const line of lineStrings) {
+    for (let i = 0; i < line.length - 1; i++) {
+      const a = line[i];
+      const b = line[i + 1];
+      if (!a || !b) continue;
+      const a2d = [a[0], a[1]];
+      const b2d = [b[0], b[1]];
+      const aM = toMeters(a2d);
+      const bM = toMeters(b2d);
+      const dx = bM[0] - aM[0];
+      const dy = bM[1] - aM[1];
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len === 0) continue;
+      segments.push({ a: aM, b: bM, len });
+      totalLength += len;
+    }
+  }
+
+  if (!segments.length || totalLength === 0) return null;
+
+  const p = toMeters(lngLat);
+  let best = { dist: Infinity, along: 0 };
+  let cumulative = 0;
+
+  for (const seg of segments) {
+    const ax = seg.a[0];
+    const ay = seg.a[1];
+    const bx = seg.b[0];
+    const by = seg.b[1];
+    const vx = bx - ax;
+    const vy = by - ay;
+    const wx = p[0] - ax;
+    const wy = p[1] - ay;
+    const segLenSq = vx * vx + vy * vy;
+    let t = segLenSq === 0 ? 0 : (wx * vx + wy * vy) / segLenSq;
+    t = Math.max(0, Math.min(1, t));
+    const projX = ax + t * vx;
+    const projY = ay + t * vy;
+    const dx = p[0] - projX;
+    const dy = p[1] - projY;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    const along = cumulative + t * seg.len;
+    if (dist < best.dist) {
+      best = { dist, along };
+    }
+    cumulative += seg.len;
+  }
+
+  const ratio = best.along / totalLength;
+  const mileage = startMileage + ratio * (endMileage - startMileage);
+  return Number.isFinite(mileage) ? mileage : null;
+}
+
 async function loadMileagePoints() {
   try {
     const response = await fetch('mileposts.geojson');
@@ -429,56 +513,50 @@ async function loadRailReferenceLines() {
         'line-opacity': 1
       }
     });
-    applyRailLinesVisibility();
 
-    // Fit the map to the rail line extent once on load so it's easier to find.
-    const bbox = (geojson.features || []).reduce(
-      (acc, feature) => {
-        const coords = feature.geometry?.coordinates;
-        const type = feature.geometry?.type;
-        if (!coords || !type) return acc;
-
-        const extend = (lon, lat) => {
-          if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
-          acc[0][0] = Math.min(acc[0][0], lon);
-          acc[0][1] = Math.min(acc[0][1], lat);
-          acc[1][0] = Math.max(acc[1][0], lon);
-          acc[1][1] = Math.max(acc[1][1], lat);
-        };
-
-        const walk = (c) => {
-          if (typeof c[0] === 'number') {
-            extend(c[0], c[1]);
-          } else {
-            c.forEach(walk);
-          }
-        };
-
-        walk(coords);
-        return acc;
+    map.addLayer({
+      id: 'rail-reference-lines-label',
+      type: 'symbol',
+      source: 'rail-reference-lines',
+      minzoom: 9,
+      layout: {
+        'symbol-placement': 'line',
+        'symbol-spacing': 200,
+        'text-field': ['coalesce', ['get', 'ELR'], ['get', 'elr'], ''],
+        'text-size': 13,
+        'text-allow-overlap': false,
+        'text-keep-upright': true,
+        'text-pitch-alignment': 'map',
+        'text-rotation-alignment': 'map'
       },
-      [
-        [Infinity, Infinity],
-        [-Infinity, -Infinity]
-      ]
-    );
-
-    if (Number.isFinite(bbox[0][0]) && Number.isFinite(bbox[1][0])) {
-      map.fitBounds(bbox, { padding: 40, maxZoom: 12 });
-    } else {
-      console.warn('Rail reference lines bbox could not be computed.');
-    }
+      paint: {
+        'text-color': '#b71c1c',
+        'text-halo-color': '#ffffff',
+        'text-halo-width': 1.5
+      }
+    });
+    applyRailLinesVisibility();
 
     map.on('click', 'rail-reference-lines-layer', (event) => {
       const feature = event.features?.[0];
       if (!feature) return;
-      const { ELR, L_M_FROM, L_M_TO } = feature.properties || {};
+      const { ELR, elr, L_M_FROM, l_m_from, L_M_TO, l_m_to } = feature.properties || {};
+      const elrValue = ELR ?? elr ?? 'N/A';
+      const mileageAtPoint = mileageAtLocation(feature, [event.lngLat.lng, event.lngLat.lat]);
+      const startMileage = Number(L_M_FROM ?? l_m_from);
+      const endMileage = Number(L_M_TO ?? l_m_to);
+
+      const mileageText = mileageAtPoint !== null
+        ? mileageAtPoint.toFixed(4)
+        : Number.isFinite(startMileage) && Number.isFinite(endMileage)
+        ? `${startMileage} - ${endMileage}`
+        : 'N/A';
+
       new mapboxgl.Popup()
         .setLngLat(event.lngLat)
         .setHTML(
-          `<strong>ELR:</strong> ${ELR || 'N/A'}<br/>
-           <strong>Mileage from:</strong> ${L_M_FROM ?? 'N/A'}<br/>
-           <strong>Mileage to:</strong> ${L_M_TO ?? 'N/A'}`
+          `<strong>ELR:</strong> ${elrValue}<br/>
+           <strong>Mileage:</strong> ${mileageText}`
         )
         .addTo(map);
     });
