@@ -135,7 +135,7 @@ function ensureNearestAccessLayer() {
       minzoom: 10,
       layout: {
         'icon-image': iconName,
-        'icon-size': 0.42, // slightly larger highlight
+        'icon-size': 0.336, // keep highlight larger while matching reduced base size
         'icon-pitch-scale': 'viewport',
         'icon-allow-overlap': true,
         'visibility': nearestAccessVisible ? 'visible' : 'none'
@@ -734,7 +734,7 @@ async function loadAccessPointsCsv() {
       minzoom: 13,
       layout: {
         'icon-image': iconName,
-        'icon-size': 0.36, // 30% larger than milepost icon (0.28)
+        'icon-size': 0.288, // reduced ~20% from previous size
         'icon-pitch-scale': 'viewport',
         'icon-allow-overlap': true
       }
