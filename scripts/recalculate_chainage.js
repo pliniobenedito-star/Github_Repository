@@ -31,21 +31,51 @@ const lineLengthMeters = (coords) => {
 const geometryLengthMeters = (geometry) => {
   if (!geometry || !geometry.coordinates) return 0;
   if (geometry.type === 'LineString') return lineLengthMeters(geometry.coordinates);
-  if (geometry.type === 'MultiLineString') return geometry.coordinates.reduce((sum, line) => sum + lineLengthMeters(line), 0);
+  if (geometry.type === 'MultiLineString') {
+    return geometry.coordinates.reduce((sum, line) => sum + lineLengthMeters(line), 0);
+  }
   return 0;
 };
 
+const featuresByElr = new Map();
+(data.features || []).forEach((feature) => {
+  const elr = feature?.properties?.ELR || 'UNKNOWN';
+  if (!featuresByElr.has(elr)) featuresByElr.set(elr, []);
+  featuresByElr.get(elr).push(feature);
+});
+
 let updated = 0;
-for (const feature of data.features || []) {
-  const props = feature.properties || {};
-  const start = Number(props.L_M_FROM);
-  if (!Number.isFinite(start)) continue;
-  const lengthMeters = geometryLengthMeters(feature.geometry);
-  const lengthMiles = lengthMeters / 1609.344;
-  props.L_M_FROM = start;
-  props.L_M_TO = Number((start + lengthMiles).toFixed(6));
-  feature.properties = props;
-  updated += 1;
+for (const [elr, feats] of featuresByElr.entries()) {
+  // Sort by current start mileage; fallback to 0 if missing/non-numeric.
+  feats.sort((a, b) => {
+    const aVal = Number(a?.properties?.L_M_FROM);
+    const bVal = Number(b?.properties?.L_M_FROM);
+    const aNum = Number.isFinite(aVal) ? aVal : 0;
+    const bNum = Number.isFinite(bVal) ? bVal : 0;
+    return aNum - bNum;
+  });
+
+  let cursor = Number.isFinite(Number(feats[0]?.properties?.L_M_FROM))
+    ? Number(feats[0].properties.L_M_FROM)
+    : 0;
+
+  for (let i = 0; i < feats.length; i++) {
+    const feature = feats[i];
+    const props = feature.properties || {};
+    const lengthMeters = geometryLengthMeters(feature.geometry);
+    const lengthMiles = lengthMeters / 1609.344;
+
+    // For the first feature, keep its existing start if valid; otherwise start at 0.
+    if (i === 0 && Number.isFinite(Number(props.L_M_FROM))) {
+      cursor = Number(props.L_M_FROM);
+    }
+
+    props.L_M_FROM = Number(cursor.toFixed(6));
+    props.L_M_TO = Number((cursor + lengthMiles).toFixed(6));
+    cursor = props.L_M_TO;
+    feature.properties = props;
+    updated += 1;
+  }
 }
 
 fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
