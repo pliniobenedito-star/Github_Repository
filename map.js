@@ -290,6 +290,12 @@ geolocate.on('geolocate', (event) => {
 });
 
 function reprojectRailGeoJSONToWgs84(geojson) {
+  const crsName = geojson?.crs?.properties?.name || '';
+  // If file already uses lon/lat (CRS84/EPSG:4326), return as-is to avoid double transforming.
+  if (crsName.includes('CRS84') || crsName.includes('4326')) {
+    return geojson;
+  }
+
   if (typeof window === 'undefined' || !window.proj4) {
     console.warn('proj4 is not available; rail reference lines will not be reprojected.');
     return geojson;
