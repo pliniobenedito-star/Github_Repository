@@ -128,8 +128,7 @@ class RailLinesControl {
     button.style.display = 'flex';
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
-    button.innerHTML =
-      '<svg width="22" height="22" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#111" d="M28 8h8l8 20h8v4h-6.7l6 15h6.7v4h-5l4 10h-8l-4-10H21l-4 10h-8l4-10H6v-4h6.7l6-15H12v-4h8l8-20zm4 10.2L24.9 32h14.2L32 18.2zm-9.3 23.8-4.8 12h28.2l-4.8-12H22.7z"/></svg>';
+    button.innerHTML = '<img src="rail-icon.svg" alt="Rail lines" width="22" height="22" />';
 
     const setActiveState = () => {
       button.classList.toggle('active', railLinesVisible);

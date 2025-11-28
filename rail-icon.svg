@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Rail toggle icon">
+  <path
+    fill="#111"
+    d="M24 6h16l7 20h9v4h-7l6 16h8v4h-7l5 14h-9l-5-14H23l-5 14h-9l5-14H7v-4h8l6-16h-7v-4h9l7-20zm8 10.3L26.5 30h11L32 16.3zM22 36l-5 14h30l-5-14H22z"
+  />
+</svg>
