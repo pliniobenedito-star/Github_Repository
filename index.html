@@ -1,30 +1,24 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Mapbox PMGeo</title>
-    <!-- Mapbox CSS from CDN for production deployments -->
-    <link
-      rel="stylesheet"
-      href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css"
-    />
-    <style>
-      body, html, #map { height: 100%; margin: 0; padding: 0; }
-      #map { width: 100%; }
-    </style>
-    <!-- Put your Mapbox token here (replace the placeholder) -->
-    <script>
-      // Replace this value with your token, or modify map.js to read it from elsewhere.
-      window.MAPBOX_TOKEN = 'pk.eyJ1IjoicGxpbmlvLXBpY2NpbiIsImEiOiJjbWh0NWFwN20xOWIyMmtyNHJ1M3AyZXJzIn0.nv6q66EUGokaNIM92SK-1g';
-    </script>
-  </head>
-  <body>
-    <div id="map"></div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Railway Chainage Explorer (Network Rail)</title>
+  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.css" />
+  <style>
+    html, body, #map { height: 100%; margin: 0; padding: 0; }
+    body { font-family: "Inter", "Segoe UI", Arial, sans-serif; }
+  </style>
+  <script>
+    // Mapbox token used by map.js
+    window.MAPBOX_TOKEN = 'pk.eyJ1IjoicGxpbmlvLXBpY2NpbiIsImEiOiJjbWh0NWFwN20xOWIyMmtyNHJ1M3AyZXJzIn0.nv6q66EUGokaNIM92SK-1g';
+  </script>
+</head>
+<body>
+  <div id="map"></div>
 
-    <!-- Mapbox JS from CDN for production deployments -->
-    <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/proj4@2.10.0/dist/proj4.js"></script>
-    <script src="map.js"></script>
-  </body>
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.1.2/mapbox-gl.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/proj4@2.10.0/dist/proj4.js"></script>
+  <script src="map.js"></script>
+</body>
 </html>

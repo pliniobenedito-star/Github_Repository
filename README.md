@@ -30,3 +30,13 @@ Notes
 
 - This demo references Mapbox GL assets from `node_modules/` so you must run `npm ci` before using `npm start`.
 - For production usage, inject the token securely (server-side, secret manager, or during build), and avoid committing secrets into the repo.
+
+## Chainage data
+
+When you update `Chainage.csv`, regenerate the derived GeoJSON layers (calibrated mileposts and strings) by running:
+
+```powershell
+npm run build:chainage
+```
+
+This script projects the OSGB36 coordinates to WGS84, snaps them to the reference lines, and writes `chainage-mileposts.geojson` and `chainage-strings.geojson` for the map to use.

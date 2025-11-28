@@ -19,7 +19,7 @@ map.addControl(new mapboxgl.NavigationControl());
 let milepostIconLoaded = false;
 let milepostVisible = true;
 let accessPointsVisible = true;
-let railLinesVisible = true;
+let railLinesVisible = false; // hide legacy reference lines by default
 let accessIconLoaded = false;
 let accessPointsFeatures = [];
 let accessPointsReady = false;
@@ -27,6 +27,17 @@ let lastUserLocation = null;
 let nearestAccessVisible = false; // default off
 let nearestAccessFeature = null;
 let nearestAccessShown = false;
+const lineSegmentsCache = new Map();
+const chainageCalibrationCache = new Map();
+let milepostChainageIndex = new Map();
+let chainagePointsByLine = new Map();
+let chainagePointsReady = false;
+let lastChainageInterpolation = null;
+
+const NETWORK_RAIL_CHAINAGE_POINTS_URLS = [
+  'NetworkRail_Database/NR_pts_wgs84.geojson',
+  'networkrail_database/NR_pts_wgs84.geojson'
+];
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -62,7 +73,7 @@ async function ensureAccessIcon() {
 
 function applyMilepostVisibility() {
   const visibility = milepostVisible ? 'visible' : 'none';
-  ['mileposts-layer', 'mileage-csv-layer'].forEach((layerId) => {
+  ['mileage-csv-layer'].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
@@ -98,6 +109,271 @@ function applyNearestAccessVisibility() {
       source.setData({ type: 'FeatureCollection', features: [] });
     }
   }
+}
+
+async function fetchGeoJSONWithFallback(urls) {
+  const errors = [];
+  for (const url of urls) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        const data = await response.json();
+        return { url, data };
+      }
+      errors.push(`${url} (${response.status})`);
+    } catch (error) {
+      errors.push(`${url} (${error.message})`);
+    }
+  }
+  throw new Error(`Unable to fetch GeoJSON: ${errors.join('; ')}`);
+}
+
+async function fetchGeoJSONIfAvailable(url) {
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      return { url, data };
+    }
+    console.warn(`GeoJSON not available at ${url} (${response.status})`);
+  } catch (error) {
+    console.warn(`Unable to reach ${url}:`, error);
+  }
+  return null;
+}
+
+const WEB_MERCATOR_RADIUS = 6378137;
+const METERS_PER_MILE = 1609.344;
+const METERS_PER_YARD = 0.9144;
+const MAX_MILEPOST_MATCH_DISTANCE_METERS = 500;
+const OSGB36_PROJ4_DEF =
+  '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs +type=crs';
+
+
+function normalizeElr(value) {
+  return value ? String(value).trim().toUpperCase() : '';
+}
+
+function toWebMercatorCoord(coord) {
+  if (!Array.isArray(coord) || coord.length < 2) return null;
+  const [lon, lat] = coord;
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+  const x = (lon * Math.PI * WEB_MERCATOR_RADIUS) / 180;
+  const y = WEB_MERCATOR_RADIUS * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+  return [x, y];
+}
+
+function flattenLineGeometry(geometry) {
+  if (!geometry) return [];
+  if (geometry.type === 'LineString') return [geometry.coordinates];
+  if (geometry.type === 'MultiLineString') return geometry.coordinates;
+  return [];
+}
+
+function buildSegmentsForGeometry(geometry) {
+  const lines = flattenLineGeometry(geometry);
+  if (!lines.length) return null;
+  const segments = [];
+  let totalLength = 0;
+  for (const line of lines) {
+    for (let i = 0; i < line.length - 1; i++) {
+      const start = toWebMercatorCoord(line[i]);
+      const end = toWebMercatorCoord(line[i + 1]);
+      if (!start || !end) continue;
+      const [ax, ay] = start;
+      const [bx, by] = end;
+      const dx = bx - ax;
+      const dy = by - ay;
+      const len = Math.hypot(dx, dy);
+      if (len === 0) continue;
+      segments.push({ ax, ay, bx, by, len, start: totalLength });
+      totalLength += len;
+    }
+  }
+  return segments.length ? { segments, totalLength } : null;
+}
+
+function getFeatureKey(feature) {
+  return feature?.properties?.__featureId ?? feature?.id ?? null;
+}
+
+function getSegmentsForFeature(feature) {
+  if (!feature?.geometry) return null;
+  const cacheKey = getFeatureKey(feature);
+  if (!cacheKey) {
+    return buildSegmentsForGeometry(feature.geometry);
+  }
+  if (lineSegmentsCache.has(cacheKey)) {
+    return lineSegmentsCache.get(cacheKey);
+  }
+  const result = buildSegmentsForGeometry(feature.geometry);
+  lineSegmentsCache.set(cacheKey, result);
+  return result;
+}
+
+function projectAlongSegments(segmentsData, lngLat) {
+  if (!segmentsData?.segments?.length || !lngLat) return null;
+  const mercatorPoint = toWebMercatorCoord(lngLat);
+  if (!mercatorPoint) return null;
+  let best = null;
+  for (const seg of segmentsData.segments) {
+    const vx = seg.bx - seg.ax;
+    const vy = seg.by - seg.ay;
+    const wx = mercatorPoint[0] - seg.ax;
+    const wy = mercatorPoint[1] - seg.ay;
+    const segLenSq = vx * vx + vy * vy;
+    let t = segLenSq === 0 ? 0 : (wx * vx + wy * vy) / segLenSq;
+    t = Math.max(0, Math.min(1, t));
+    const projX = seg.ax + t * vx;
+    const projY = seg.ay + t * vy;
+    const dx = mercatorPoint[0] - projX;
+    const dy = mercatorPoint[1] - projY;
+    const dist = Math.hypot(dx, dy);
+    const along = seg.start + t * seg.len;
+    if (!best || dist < best.dist) {
+      best = { dist, along };
+    }
+  }
+  return best ? { along: best.along, totalLength: segmentsData.totalLength, dist: best.dist } : null;
+}
+
+function projectAlongFeature(feature, lngLat) {
+  const segmentsData = getSegmentsForFeature(feature);
+  if (!segmentsData) return null;
+  return projectAlongSegments(segmentsData, lngLat);
+}
+
+function extractChainBreakpoints(feature) {
+  const raw = feature?.properties?.chain_breakpoints;
+  if (!Array.isArray(raw) || !raw.length) return null;
+  const pairs = raw
+    .map((entry) => {
+      if (Array.isArray(entry)) {
+        const ratio = Number(entry[0]);
+        const mileage = Number(entry[1]);
+        if (!Number.isFinite(ratio) || !Number.isFinite(mileage)) return null;
+        return { ratio, mileage };
+      }
+      if (entry && typeof entry === 'object') {
+        const ratio = Number(entry.ratio ?? entry.r ?? entry[0]);
+        const mileage = Number(entry.miles ?? entry.m ?? entry.miles_dec ?? entry[1]);
+        if (!Number.isFinite(ratio) || !Number.isFinite(mileage)) return null;
+        return { ratio, mileage };
+      }
+      return null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.ratio - b.ratio);
+  return pairs.length ? pairs : null;
+}
+
+function buildMilepostIndex(features) {
+  const index = new Map();
+  for (const feature of features || []) {
+    const elr = normalizeElr(feature?.properties?.ELR ?? feature?.properties?.elr);
+    let mileage =
+      Number(
+        feature?.properties?.mileage ??
+          feature?.properties?.Mileage ??
+          feature?.properties?.miles_dec ??
+          feature?.properties?.original_mileage ??
+          feature?.properties?.projected_mileage
+      );
+    if (!Number.isFinite(mileage)) {
+      const chainageMeters = Number(feature?.properties?.chainage ?? feature?.properties?.Chainage);
+      if (Number.isFinite(chainageMeters)) {
+        mileage = chainageMeters / METERS_PER_MILE;
+      }
+    }
+    const coords = feature?.geometry?.coordinates;
+    if (!elr || !Number.isFinite(mileage) || !Array.isArray(coords)) continue;
+    if (!index.has(elr)) {
+      index.set(elr, []);
+    }
+    index.get(elr).push({ mileage, coordinates: coords });
+  }
+  for (const posts of index.values()) {
+    posts.sort((a, b) => a.mileage - b.mileage);
+  }
+  return index;
+}
+
+function ensureChainageCalibration(feature, posts) {
+  const cacheKey = getFeatureKey(feature);
+  if (!cacheKey) return null;
+  if (chainageCalibrationCache.has(cacheKey)) {
+    return chainageCalibrationCache.get(cacheKey);
+  }
+  const segmentsData = getSegmentsForFeature(feature);
+  if (!segmentsData) {
+    chainageCalibrationCache.set(cacheKey, null);
+    return null;
+  }
+  let calibration = null;
+  if (posts?.length) {
+    const pairs = [];
+    for (const post of posts) {
+      const projection = projectAlongSegments(segmentsData, post.coordinates);
+      if (!projection || !projection.totalLength) continue;
+      if (Number.isFinite(projection.dist) && projection.dist > MAX_MILEPOST_MATCH_DISTANCE_METERS) {
+        continue; // avoid pulling mileposts that are too far from this line
+      }
+      const ratio = projection.along / projection.totalLength;
+      if (!Number.isFinite(ratio)) continue;
+      pairs.push({ ratio, mileage: post.mileage });
+    }
+    pairs.sort((a, b) => a.ratio - b.ratio);
+    const deduped = [];
+    for (const pair of pairs) {
+      const last = deduped[deduped.length - 1];
+      if (last && Math.abs(pair.ratio - last.ratio) < 1e-6) {
+        deduped[deduped.length - 1] = pair;
+      } else {
+        deduped.push(pair);
+      }
+    }
+    calibration = deduped.length > 0 ? { pairs: deduped, totalLength: segmentsData.totalLength } : null;
+  }
+
+  if (!calibration) {
+    const breakpointPairs = extractChainBreakpoints(feature);
+    if (breakpointPairs?.length) {
+      calibration = { pairs: breakpointPairs, totalLength: segmentsData.totalLength };
+    }
+  }
+
+  chainageCalibrationCache.set(cacheKey, calibration);
+  return calibration;
+}
+
+function interpolateMileageFromPairs(pairs, ratio) {
+  if (!pairs?.length || !Number.isFinite(ratio)) return null;
+  if (ratio <= pairs[0].ratio) return pairs[0].mileage;
+  for (let i = 0; i < pairs.length - 1; i++) {
+    const current = pairs[i];
+    const next = pairs[i + 1];
+    if (ratio >= current.ratio && ratio <= next.ratio) {
+      const span = next.ratio - current.ratio;
+      if (span === 0) {
+        return next.mileage;
+      }
+      const localRatio = (ratio - current.ratio) / span;
+      return current.mileage + localRatio * (next.mileage - current.mileage);
+    }
+  }
+  return pairs[pairs.length - 1].mileage;
+}
+
+function mileageFromMileposts(feature, lngLat) {
+  const props = feature?.properties || {};
+  const elr = normalizeElr(props.ELR ?? props.elr);
+  const posts = elr ? milepostChainageIndex.get(elr) : undefined;
+  const calibration = ensureChainageCalibration(feature, posts);
+  if (!calibration?.pairs?.length || !calibration.totalLength) return null;
+  const projection = projectAlongFeature(feature, lngLat);
+  if (!projection || !projection.totalLength) return null;
+  const ratio = projection.along / projection.totalLength;
+  return interpolateMileageFromPairs(calibration.pairs, ratio);
 }
 
 function haversineDistance(lngLat1, lngLat2) {
@@ -192,6 +468,20 @@ function addMilepostToggleControl() {
   container.style.cssText =
     'position:absolute;top:10px;left:10px;z-index:1;background:#fff;padding:8px 10px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,0.2);font-family:sans-serif;font-size:13px;';
 
+  const railLinesCheckbox = document.createElement('input');
+  railLinesCheckbox.type = 'checkbox';
+  railLinesCheckbox.id = 'rail-reference-lines-toggle';
+  railLinesCheckbox.checked = railLinesVisible;
+  railLinesCheckbox.addEventListener('change', () => {
+    railLinesVisible = railLinesCheckbox.checked;
+    applyRailLinesVisibility();
+  });
+
+  const railLinesLabel = document.createElement('label');
+  railLinesLabel.setAttribute('for', 'rail-reference-lines-toggle');
+  railLinesLabel.textContent = 'Show reference lines';
+  railLinesLabel.style.marginLeft = '6px';
+
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.id = 'milepost-toggle';
@@ -246,29 +536,15 @@ function addMilepostToggleControl() {
   nearestLabel.textContent = 'Show nearest access point';
   nearestLabel.style.marginLeft = '6px';
 
-  const railLinesCheckbox = document.createElement('input');
-  railLinesCheckbox.type = 'checkbox';
-  railLinesCheckbox.id = 'rail-reference-lines-toggle';
-  railLinesCheckbox.checked = railLinesVisible;
-  railLinesCheckbox.style.marginLeft = '12px';
-  railLinesCheckbox.addEventListener('change', () => {
-    railLinesVisible = railLinesCheckbox.checked;
-    applyRailLinesVisibility();
-  });
-
-  const railLinesLabel = document.createElement('label');
-  railLinesLabel.setAttribute('for', 'rail-reference-lines-toggle');
-  railLinesLabel.textContent = 'Show reference lines';
-  railLinesLabel.style.marginLeft = '6px';
-
+  container.appendChild(railLinesCheckbox);
+  container.appendChild(railLinesLabel);
+  container.appendChild(document.createElement('br'));
   container.appendChild(checkbox);
   container.appendChild(label);
   container.appendChild(apCheckbox);
   container.appendChild(apLabel);
   container.appendChild(nearestCheckbox);
   container.appendChild(nearestLabel);
-  container.appendChild(railLinesCheckbox);
-  container.appendChild(railLinesLabel);
   map.getContainer().appendChild(container);
 }
 
@@ -287,7 +563,28 @@ geolocate.on('geolocate', (event) => {
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
     showNearestAccessPoint(lastUserLocation);
   }
+  updateInterpolationForLocation(lastUserLocation);
 });
+
+function ensureOsgbProjection() {
+  if (typeof window === 'undefined' || !window.proj4) {
+    return false;
+  }
+  if (!window.proj4.defs('EPSG:27700')) {
+    window.proj4.defs('EPSG:27700', OSGB36_PROJ4_DEF);
+    console.log('Defined proj4 EPSG:27700');
+  }
+  return true;
+}
+
+function convertOsgbToWgs84(coord) {
+  if (!Array.isArray(coord) || coord.length < 2) return null;
+  if (!ensureOsgbProjection()) return null;
+  const [x, y] = coord;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const [lon, lat] = window.proj4('EPSG:27700', 'EPSG:4326', [x, y]);
+  return [lon, lat];
+}
 
 function reprojectRailGeoJSONToWgs84(geojson) {
   const crsName = geojson?.crs?.properties?.name || '';
@@ -296,23 +593,14 @@ function reprojectRailGeoJSONToWgs84(geojson) {
     return geojson;
   }
 
-  if (typeof window === 'undefined' || !window.proj4) {
+  if (!ensureOsgbProjection()) {
     console.warn('proj4 is not available; rail reference lines will not be reprojected.');
     return geojson;
   }
 
-  if (!window.proj4.defs('EPSG:27700')) {
-    window.proj4.defs(
-      'EPSG:27700',
-      '+proj=tmerc +lat_0=49 +lon_0=-2 +k=0.9996012717 +x_0=400000 +y_0=-100000 +ellps=airy +datum=OSGB36 +units=m +no_defs +type=crs'
-    );
-    console.log('Defined proj4 EPSG:27700');
-  }
-
   const toLonLat = (coord) => {
-    const [x, y] = coord;
-    const [lon, lat] = window.proj4('EPSG:27700', 'EPSG:4326', [x, y]);
-    return [lon, lat];
+    const converted = convertOsgbToWgs84(coord);
+    return converted ?? coord;
   };
 
   const convertCoordinates = (coordinates, type) => {
@@ -342,6 +630,260 @@ function reprojectRailGeoJSONToWgs84(geojson) {
   };
 }
 
+function reprojectPointGeoJSONToWgs84(geojson) {
+  const crsName = geojson?.crs?.properties?.name || '';
+  if (crsName.includes('CRS84') || crsName.includes('4326')) {
+    return geojson;
+  }
+  if (!ensureOsgbProjection()) {
+    console.warn('proj4 is not available; route points will not be reprojected.');
+    return geojson;
+  }
+
+  return {
+    ...geojson,
+    features: (geojson.features || []).map((feature) => {
+      const coords = feature?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) {
+        return feature;
+      }
+      const converted = convertOsgbToWgs84(coords);
+      return {
+        ...feature,
+        geometry: {
+          ...feature.geometry,
+          coordinates: converted ?? coords
+        }
+      };
+    })
+  };
+}
+
+function buildChainagePointIndex(features) {
+  const byLine = new Map();
+  for (const feature of features || []) {
+    const props = feature?.properties || {};
+    const lineRaw = props.lcat ?? props.line_id ?? props.route_id ?? props.RouteID;
+    const lineId = lineRaw === 0 ? '0' : lineRaw ? String(lineRaw) : 'default';
+    const chainMeters = Number(props.chainage ?? props.Chainage ?? props.chain ?? props.Chain);
+    const coords = feature?.geometry?.coordinates;
+    if (!Number.isFinite(chainMeters) || !Array.isArray(coords) || coords.length < 2) continue;
+    const [lng, lat] = coords;
+    if (!Number.isFinite(lng) || !Number.isFinite(lat)) continue;
+    if (!byLine.has(lineId)) {
+      byLine.set(lineId, []);
+    }
+    byLine.get(lineId).push({
+      chainMeters,
+      lngLat: [lng, lat],
+      properties: props
+    });
+  }
+
+  for (const points of byLine.values()) {
+    points.sort((a, b) => a.chainMeters - b.chainMeters);
+  }
+
+  return byLine;
+}
+
+async function loadChainagePoints() {
+  try {
+    console.log('Loading Network Rail chainage points.');
+    const { data: rawGeojson } = await fetchGeoJSONWithFallback(NETWORK_RAIL_CHAINAGE_POINTS_URLS);
+    const geojson = reprojectPointGeoJSONToWgs84(rawGeojson);
+    chainagePointsByLine = buildChainagePointIndex(geojson.features);
+    chainagePointsReady = true;
+    lastChainageInterpolation = null;
+    setInterpolationStatus('Network Rail chainage ready. Move to see your chainage.');
+    if (lastUserLocation) {
+      updateInterpolationForLocation(lastUserLocation);
+    }
+  } catch (error) {
+    console.error('Unable to load Network Rail chainage points:', error);
+    setInterpolationStatus('Unable to load Network Rail chainage points.');
+  }
+}
+
+function projectToSegmentRatio(startLngLat, endLngLat, targetLngLat) {
+  const start = toWebMercatorCoord(startLngLat);
+  const end = toWebMercatorCoord(endLngLat);
+  const target = toWebMercatorCoord(targetLngLat);
+  if (!start || !end || !target) return null;
+  const vx = end[0] - start[0];
+  const vy = end[1] - start[1];
+  const wx = target[0] - start[0];
+  const wy = target[1] - start[1];
+  const denom = vx * vx + vy * vy;
+  if (denom === 0) {
+    return { ratio: 0, distanceMeters: Math.hypot(wx, wy) };
+  }
+  let t = (wx * vx + wy * vy) / denom;
+  t = Math.max(0, Math.min(1, t));
+  const projX = start[0] + t * vx;
+  const projY = start[1] + t * vy;
+  const distanceMeters = Math.hypot(target[0] - projX, target[1] - projY);
+  return { ratio: t, distanceMeters };
+}
+
+function findNearestChainagePoint(userLngLat) {
+  if (!chainagePointsByLine?.size) return null;
+  let best = null;
+  for (const [lineId, points] of chainagePointsByLine.entries()) {
+    for (let i = 0; i < points.length; i++) {
+      const distance = haversineDistance(userLngLat, points[i].lngLat);
+      if (!best || distance < best.distance) {
+        best = { lineId: String(lineId), index: i, point: points[i], distance };
+      }
+    }
+  }
+  return best;
+}
+
+function findChainageAnchors(nearest, userLngLat) {
+  if (!nearest) return null;
+  const points = chainagePointsByLine.get(nearest.lineId);
+  if (!points?.length) return null;
+
+  const prev = points[nearest.index - 1];
+  const next = points[nearest.index + 1];
+  let anchorB = null;
+
+  if (prev && next) {
+    const prevDist = haversineDistance(userLngLat, prev.lngLat);
+    const nextDist = haversineDistance(userLngLat, next.lngLat);
+    anchorB = prevDist < nextDist ? prev : next;
+  } else {
+    anchorB = next ?? prev ?? null;
+  }
+
+  if (!anchorB) return null;
+
+  return {
+    lineId: nearest.lineId,
+    anchorA: nearest.point,
+    anchorB,
+    distanceMeters: nearest.distance
+  };
+}
+
+function interpolateChainageFromNetworkRail(userLngLat) {
+  const nearest = findNearestChainagePoint(userLngLat);
+  const anchors = findChainageAnchors(nearest, userLngLat);
+  if (!anchors?.anchorA || !anchors.anchorB) return null;
+  const projection = projectToSegmentRatio(anchors.anchorA.lngLat, anchors.anchorB.lngLat, userLngLat);
+  if (!projection) return null;
+  const chainMeters =
+    anchors.anchorA.chainMeters + projection.ratio * (anchors.anchorB.chainMeters - anchors.anchorA.chainMeters);
+
+  return {
+    ...anchors,
+    chainMeters,
+    distanceMeters: projection.distanceMeters
+  };
+}
+
+let interpolationStatusEl = null;
+
+function addInterpolationStatusControl() {
+  if (interpolationStatusEl) return;
+  const container = document.createElement('div');
+  container.style.cssText =
+    'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:1;background:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.25);font-family:sans-serif;font-size:13px;max-width:360px;line-height:1.4;white-space:pre-line;text-align:center;';
+  container.textContent = 'Loading Network Rail chainage points...';
+  interpolationStatusEl = container;
+  map.getContainer().appendChild(container);
+}
+
+function setInterpolationStatus(message) {
+  if (interpolationStatusEl) {
+    interpolationStatusEl.textContent = message;
+  } else {
+    console.log(message);
+  }
+}
+
+function renderChainageInterpolationResult(result) {
+  lastChainageInterpolation = result;
+  if (!result) {
+    setInterpolationStatus('Network Rail chainage not available near you.');
+    return;
+  }
+  const chainText = formatMetersValue(result.chainMeters);
+  const milesText = formatMilesFromMeters(result.chainMeters);
+  const yardsText = formatYardsFromMeters(result.chainMeters);
+  const distanceText = Number.isFinite(result.distanceMeters)
+    ? `+/-${result.distanceMeters.toFixed(1)} m`
+    : 'distance N/A';
+  setInterpolationStatus(`Network Rail chainage: ${chainText} | ${milesText} | ${yardsText} (${distanceText})`);
+}
+
+function updateInterpolationForLocation(userLngLat) {
+  if (!userLngLat) return;
+  if (!chainagePointsReady) {
+    setInterpolationStatus('Network Rail chainage points are still loading...');
+    return;
+  }
+  const result = interpolateChainageFromNetworkRail(userLngLat);
+  renderChainageInterpolationResult(result);
+}
+function parseCoordText(text) {
+  if (!text) return null;
+  const parts = text
+    .trim()
+    .split(/\s+/)
+    .map((value) => Number(value));
+  if (parts.length < 2 || !Number.isFinite(parts[0]) || !Number.isFinite(parts[1])) {
+    return null;
+  }
+  return [parts[0], parts[1]];
+}
+
+function formatChainageMeters(value) {
+  if (!Number.isFinite(value)) return 'N/A';
+  const kilometers = Math.floor(value / 1000);
+  const remainder = Math.abs(value - kilometers * 1000);
+  const remainderStr = remainder.toFixed(3).padStart(7, '0');
+  return `${kilometers}+${remainderStr}`;
+}
+
+function formatChainagePlain(value) {
+  if (!Number.isFinite(value)) return 'N/A';
+  return value.toFixed(3);
+}
+
+function formatMiles(value) {
+  if (!Number.isFinite(value)) return 'N/A';
+  return `${value.toFixed(3)} miles`;
+}
+
+function formatChainageWithMiles(chainageMeters) {
+  return `${formatChainageMeters(chainageMeters)} (${formatMiles(chainageMeters / METERS_PER_MILE)})`;
+}
+
+function formatMetersValue(value) {
+  if (!Number.isFinite(value)) return 'N/A';
+  return `${value.toFixed(3)} m`;
+}
+
+function formatMilesFromMeters(meters) {
+  if (!Number.isFinite(meters)) return 'N/A';
+  return `${(meters / METERS_PER_MILE).toFixed(3)} mi`;
+}
+
+function formatYardsFromMeters(meters) {
+  if (!Number.isFinite(meters)) return 'N/A';
+  return `${(meters / METERS_PER_YARD).toFixed(1)} yd`;
+}
+
+function formatMilesYardsFromMeters(meters) {
+  if (!Number.isFinite(meters)) return 'N/A';
+  const miles = Math.floor(meters / METERS_PER_MILE);
+  const yards = Math.round((meters - miles * METERS_PER_MILE) / METERS_PER_YARD);
+  const yardsPadded = String(Math.max(0, yards)).padStart(4, '0');
+  return `${miles}m ${yardsPadded}yds`;
+}
+
 // Utility: approximate a mileage at a clicked point along a line/multiline
 function mileageAtLocation(feature, lngLat) {
   const props = feature?.properties || {};
@@ -350,145 +892,130 @@ function mileageAtLocation(feature, lngLat) {
   if (!Number.isFinite(startMileage) || !Number.isFinite(endMileage)) {
     return null;
   }
-
-  const toMeters = ([lon, lat]) => {
-    const R = 6378137;
-    const x = (lon * Math.PI * R) / 180;
-    const y = R * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
-    return [x, y];
-  };
-
-  const flattenLines = (geometry) => {
-    if (!geometry) return [];
-    if (geometry.type === 'LineString') return [geometry.coordinates];
-    if (geometry.type === 'MultiLineString') return geometry.coordinates;
-    return [];
-  };
-
-  const lineStrings = flattenLines(feature.geometry);
-  if (!lineStrings.length) return null;
-
-  let totalLength = 0;
-  const segments = [];
-
-  for (const line of lineStrings) {
-    for (let i = 0; i < line.length - 1; i++) {
-      const a = line[i];
-      const b = line[i + 1];
-      if (!a || !b) continue;
-      const a2d = [a[0], a[1]];
-      const b2d = [b[0], b[1]];
-      const aM = toMeters(a2d);
-      const bM = toMeters(b2d);
-      const dx = bM[0] - aM[0];
-      const dy = bM[1] - aM[1];
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len === 0) continue;
-      segments.push({ a: aM, b: bM, len });
-      totalLength += len;
-    }
+  const projection = projectAlongFeature(feature, lngLat);
+  if (!projection || !projection.totalLength) {
+    return null;
   }
-
-  if (!segments.length || totalLength === 0) return null;
-
-  const p = toMeters(lngLat);
-  let best = { dist: Infinity, along: 0 };
-  let cumulative = 0;
-
-  for (const seg of segments) {
-    const ax = seg.a[0];
-    const ay = seg.a[1];
-    const bx = seg.b[0];
-    const by = seg.b[1];
-    const vx = bx - ax;
-    const vy = by - ay;
-    const wx = p[0] - ax;
-    const wy = p[1] - ay;
-    const segLenSq = vx * vx + vy * vy;
-    let t = segLenSq === 0 ? 0 : (wx * vx + wy * vy) / segLenSq;
-    t = Math.max(0, Math.min(1, t));
-    const projX = ax + t * vx;
-    const projY = ay + t * vy;
-    const dx = p[0] - projX;
-    const dy = p[1] - projY;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    const along = cumulative + t * seg.len;
-    if (dist < best.dist) {
-      best = { dist, along };
-    }
-    cumulative += seg.len;
-  }
-
-  const ratio = best.along / totalLength;
+  const ratio = projection.along / projection.totalLength;
   const mileage = startMileage + ratio * (endMileage - startMileage);
   return Number.isFinite(mileage) ? mileage : null;
 }
 
-async function loadMileagePoints() {
-  try {
-    const response = await fetch('mileposts.geojson');
-    if (!response.ok) {
-      throw new Error(`Failed to fetch mileage data (${response.status})`);
+function interpolateChainageFromPairs(pairs, ratio) {
+  if (!pairs?.length || !Number.isFinite(ratio)) return null;
+  if (ratio <= pairs[0].ratio) return pairs[0].chainage;
+  for (let i = 0; i < pairs.length - 1; i++) {
+    const current = pairs[i];
+    const next = pairs[i + 1];
+    if (ratio >= current.ratio && ratio <= next.ratio) {
+      const span = next.ratio - current.ratio;
+      if (span === 0) {
+        return next.chainage;
+      }
+      const localRatio = (ratio - current.ratio) / span;
+      return current.chainage + localRatio * (next.chainage - current.chainage);
     }
-  const geojson = await response.json();
+  }
+  return pairs[pairs.length - 1].chainage;
+}
 
-  map.addSource('mileposts', {
-    type: 'geojson',
-    data: geojson
+function chainageAtLngLatFromFeature(feature, lngLat) {
+  const pairs = feature?.properties?.chainagePairs;
+  if (!pairs?.length) return null;
+  const projection = projectAlongFeature(feature, lngLat);
+  if (!projection || !projection.totalLength) return null;
+  const ratio = projection.along / projection.totalLength;
+  return interpolateChainageFromPairs(pairs, ratio);
+}
+
+function indexMilepostsByElr(features) {
+  const mapByElr = new Map();
+  for (const feature of features || []) {
+    const elr = normalizeElr(feature?.properties?.ELR ?? feature?.properties?.elr);
+    const mileage = Number(
+      feature?.properties?.mileage ?? feature?.properties?.Mileage ?? feature?.properties?.miles_dec
+    );
+    const coords = feature?.geometry?.coordinates;
+    if (!elr || !Number.isFinite(mileage) || !Array.isArray(coords)) continue;
+    if (!mapByElr.has(elr)) {
+      mapByElr.set(elr, []);
+    }
+    mapByElr.get(elr).push({ mileage, coordinates: coords });
+  }
+  return mapByElr;
+}
+
+function mergeProjectedMilepostsWithOriginal(projectedGeojson, originalGeojson) {
+  if (!projectedGeojson && !originalGeojson) return null;
+  if (!projectedGeojson || !originalGeojson) return projectedGeojson ?? originalGeojson;
+
+  const originalIndex = indexMilepostsByElr(originalGeojson.features);
+
+  const mergedFeatures = (projectedGeojson.features || []).map((feature) => {
+    const elr = normalizeElr(feature?.properties?.ELR ?? feature?.properties?.elr);
+    const coords = feature?.geometry?.coordinates;
+    let bestMatch = null;
+
+    if (elr && Array.isArray(coords) && originalIndex.has(elr)) {
+      for (const candidate of originalIndex.get(elr)) {
+        const distance = haversineDistance(coords, candidate.coordinates);
+        if (!bestMatch || distance < bestMatch.distance) {
+          bestMatch = { distance, mileage: candidate.mileage };
+        }
+      }
+    }
+
+    const projectedMileage = Number(
+      feature?.properties?.mileage ?? feature?.properties?.Mileage ?? feature?.properties?.miles_dec
+    );
+    const shouldUseOriginal =
+      bestMatch && Number.isFinite(bestMatch.mileage) && bestMatch.distance <= MAX_MILEPOST_MATCH_DISTANCE_METERS;
+    const mileageToUse = shouldUseOriginal ? bestMatch.mileage : projectedMileage;
+
+    const properties = {
+      ...feature.properties,
+      mileage: Number.isFinite(mileageToUse) ? mileageToUse : feature?.properties?.mileage,
+      miles_dec: Number.isFinite(mileageToUse) ? mileageToUse : feature?.properties?.miles_dec,
+      original_mileage: shouldUseOriginal ? bestMatch.mileage : undefined,
+      projected_mileage: Number.isFinite(projectedMileage) ? projectedMileage : undefined,
+      mileage_source: shouldUseOriginal
+        ? 'original'
+        : Number.isFinite(projectedMileage)
+        ? 'projected'
+        : 'unknown'
+    };
+
+    return { ...feature, properties };
   });
 
-  const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
-  map.addLayer({
-    id: 'mileposts-layer',
-      type: 'symbol',
-      source: 'mileposts',
-      minzoom: 13, // only show when zoomed in
-      layout: {
-        'icon-image': iconName, // custom icon if loaded, otherwise built-in marker
-        'icon-size': 0.28, // smaller marker
-        'icon-pitch-scale': 'viewport', // keep icon size consistent when zooming/pitching
-        'icon-allow-overlap': true
-      }
-    });
-    applyMilepostVisibility();
-
-    map.on('click', 'mileposts-layer', (event) => {
-      const feature = event.features?.[0];
-      if (!feature) return;
-      const { ELR, mileage } = feature.properties || {};
-      new mapboxgl.Popup()
-        .setLngLat(event.lngLat)
-        .setHTML(
-          `<strong>ELR:</strong> ${ELR || 'N/A'}<br/><strong>Mileage:</strong> ${
-            mileage ?? 'N/A'
-          }`
-        )
-        .addTo(map);
-    });
-
-    map.on('mouseenter', 'mileposts-layer', () => {
-      map.getCanvas().style.cursor = 'pointer';
-    });
-
-    map.on('mouseleave', 'mileposts-layer', () => {
-      map.getCanvas().style.cursor = '';
-    });
-  } catch (error) {
-    console.error('Unable to load mileage GeoJSON:', error);
-  }
+  return { ...projectedGeojson, features: mergedFeatures };
 }
 
 async function loadRailReferenceLines() {
   try {
-    console.log('Loading rail reference lines…');
-    const response = await fetch('/Rail_reference_line.geojson');
-    if (!response.ok) {
-      throw new Error(`Failed to fetch rail reference lines (${response.status})`);
-    }
-    const rawGeojson = await response.json();
-    const geojson = reprojectRailGeoJSONToWgs84(rawGeojson);
+    console.log('Loading rail reference lines.');
+    const { data: rawGeojson, url } = await fetchGeoJSONWithFallback([
+      '/chainage-strings.geojson',
+      '/Rail_reference_line.geojson'
+    ]);
+    const shouldReproject = !url.includes('chainage-strings.geojson');
+    const geojson = shouldReproject ? reprojectRailGeoJSONToWgs84(rawGeojson) : rawGeojson;
     const featureCount = (geojson.features || []).length;
-    console.log(`Rail reference lines loaded: ${featureCount} features`);
+    console.log(`Rail reference lines loaded from ${url}: ${featureCount} features`);
+    (geojson.features || []).forEach((feature, index) => {
+      if (!feature.properties) {
+        feature.properties = {};
+      }
+      if (!feature.properties.__featureId) {
+        const fallbackId =
+          feature.properties.OBJECTID ??
+          feature.properties.ASSETID ??
+          `${feature.properties.ELR ?? 'line'}-${index}`;
+        feature.properties.__featureId = String(fallbackId);
+      }
+    });
+    lineSegmentsCache.clear();
+    chainageCalibrationCache.clear();
 
     map.addSource('rail-reference-lines', {
       type: 'geojson',
@@ -548,14 +1075,24 @@ async function loadRailReferenceLines() {
       if (!feature) return;
       const { ELR, elr, L_M_FROM, l_m_from, L_M_TO, l_m_to } = feature.properties || {};
       const elrValue = ELR ?? elr ?? 'N/A';
-      const mileageAtPoint = mileageAtLocation(feature, [event.lngLat.lng, event.lngLat.lat]);
+      const clickedLngLat = [event.lngLat.lng, event.lngLat.lat];
+      const chainageResult = chainagePointsReady ? interpolateChainageFromNetworkRail(clickedLngLat) : null;
+      const chainMeters = Number(chainageResult?.chainMeters);
+      const mileageFromPosts = mileageFromMileposts(feature, clickedLngLat);
+      const fallbackMileage = mileageAtLocation(feature, clickedLngLat);
       const startMileage = Number(L_M_FROM ?? l_m_from);
       const endMileage = Number(L_M_TO ?? l_m_to);
 
-      const mileageText = mileageAtPoint !== null
-        ? mileageAtPoint.toFixed(4)
+      const mileageText = Number.isFinite(chainMeters)
+        ? formatMilesYardsFromMeters(chainMeters)
+        : Number.isFinite(mileageFromPosts)
+        ? formatMilesYardsFromMeters(mileageFromPosts * METERS_PER_MILE)
+        : Number.isFinite(fallbackMileage)
+        ? formatMilesYardsFromMeters(fallbackMileage * METERS_PER_MILE)
         : Number.isFinite(startMileage) && Number.isFinite(endMileage)
-        ? `${startMileage} - ${endMileage}`
+        ? `${formatMilesYardsFromMeters(startMileage * METERS_PER_MILE)} - ${formatMilesYardsFromMeters(
+            endMileage * METERS_PER_MILE
+          )}`
         : 'N/A';
 
       new mapboxgl.Popup()
@@ -580,14 +1117,22 @@ async function loadRailReferenceLines() {
 
 map.on('load', () => {
   console.log('Map loaded');
-  geolocate.trigger(); // Automatically trigger location search on map load
+  addInterpolationStatusControl();
+  setInterpolationStatus('Loading Network Rail chainage points...');
+  loadChainagePoints();
   ensureMilepostIcon().finally(() => {
-    loadMileagePoints();
     loadMileageCsv();
     loadAccessPointsCsv();
     loadRailReferenceLines();
   });
   addMilepostToggleControl();
+  geolocate.trigger(); // Automatically trigger location search on map load
+
+  // Clicking anywhere simulates a GPS fix and refreshes interpolation overlays.
+  map.on('click', (event) => {
+    lastUserLocation = [event.lngLat.lng, event.lngLat.lat];
+    updateInterpolationForLocation(lastUserLocation);
+  });
 });
 
 // Utility: Convert the simple mileage CSV (elr,mileage,lat,lon) into GeoJSON.
@@ -666,33 +1211,46 @@ async function loadMileageCsv() {
     if (!response.ok) throw new Error(`Failed to fetch mileage CSV (${response.status})`);
 
     const csvText = await response.text();
-  const geojson = csvToGeoJSON(csvText);
+    const geojson = csvToGeoJSON(csvText);
+    milepostChainageIndex = buildMilepostIndex(geojson.features || []);
+    chainageCalibrationCache.clear();
 
-  map.addSource('mileage-csv', { type: 'geojson', data: geojson });
-  const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
-  map.addLayer({
-    id: 'mileage-csv-layer',
-      type: 'symbol',
-      source: 'mileage-csv',
-      minzoom: 13,
-      layout: {
-        'icon-image': iconName,
-        'icon-size': 0.28, // smaller marker
-        'icon-pitch-scale': 'viewport',
-      'icon-allow-overlap': true
+    if (map.getSource('mileage-csv')) {
+      map.getSource('mileage-csv').setData(geojson);
+    } else {
+      map.addSource('mileage-csv', { type: 'geojson', data: geojson });
     }
-  });
+
+    const iconName = map.hasImage('milepost-icon') ? 'milepost-icon' : 'marker-15';
+    if (!map.getLayer('mileage-csv-layer')) {
+      map.addLayer({
+        id: 'mileage-csv-layer',
+        type: 'symbol',
+        source: 'mileage-csv',
+        minzoom: 13,
+        layout: {
+          'icon-image': iconName,
+          'icon-size': 0.28, // smaller marker
+          'icon-pitch-scale': 'viewport',
+          'icon-allow-overlap': true
+        }
+      });
+    }
     applyMilepostVisibility();
 
     map.on('click', 'mileage-csv-layer', (event) => {
       const feature = event.features?.[0];
       if (!feature) return;
       const { ELR, mileage } = feature.properties || {};
+      const mileageMiles = Number(mileage);
+      const mileageText = Number.isFinite(mileageMiles)
+        ? formatMilesYardsFromMeters(mileageMiles * METERS_PER_MILE)
+        : mileage ?? 'N/A';
       new mapboxgl.Popup()
         .setLngLat(event.lngLat)
         .setHTML(
           `<strong>ELR:</strong> ${ELR || 'N/A'}<br/><strong>Mileage:</strong> ${
-            mileage ?? 'N/A'
+            mileageText
           }`
         )
         .addTo(map);
@@ -771,3 +1329,5 @@ async function loadAccessPointsCsv() {
     console.error('Unable to load access points CSV:', error);
   }
 }
+
+
