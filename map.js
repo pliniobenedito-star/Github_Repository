@@ -128,7 +128,8 @@ class RailLinesControl {
     button.style.display = 'flex';
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
-    button.innerHTML = '<img src="rail-icon.svg" alt="Rail lines" width="22" height="22" />';
+    button.innerHTML =
+      '<img src="Icon%20button/Reference_line.png" alt="Rail lines" width="22" height="22" />';
 
     const setActiveState = () => {
       button.classList.toggle('active', railLinesVisible);

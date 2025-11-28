@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rail-chainage-pwa-v4';
+const CACHE_NAME = 'rail-chainage-pwa-v5';
 const ASSETS = [
   '/',
   '/index.html',
@@ -6,9 +6,9 @@ const ASSETS = [
   '/manifest.webmanifest',
   '/icon-192.png',
   '/icon-512.png',
-  '/rail-icon.svg',
   '/Icon%20button/milepost_icon.png',
-  '/Icon%20button/access_icon.png'
+  '/Icon%20button/access_icon.png',
+  '/Icon%20button/Reference_line.png'
 ];
 
 self.addEventListener('install', (event) => {
