@@ -116,13 +116,18 @@ class RailLinesControl {
     this._map = mapInstance;
     const container = document.createElement('div');
     container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    container.style.marginTop = '52px'; // position beneath geolocate control
+    container.style.marginTop = '12px'; // add breathing room beneath geolocate for touch targets
 
     const button = document.createElement('button');
     button.type = 'button';
     button.title = 'Toggle reference lines';
     button.setAttribute('aria-label', 'Toggle reference lines');
-    button.style.padding = '6px';
+    button.style.padding = '4px';
+    button.style.width = '32px';
+    button.style.height = '32px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
     button.innerHTML =
       '<svg width="22" height="22" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#111" d="M28 8h8l8 20h8v4h-6.7l6 15h6.7v4h-5l4 10h-8l-4-10H21l-4 10h-8l4-10H6v-4h6.7l6-15H12v-4h8l8-20zm4 10.2L24.9 32h14.2L32 18.2zm-9.3 23.8-4.8 12h28.2l-4.8-12H22.7z"/></svg>';
 
