@@ -19,7 +19,7 @@ map.addControl(new mapboxgl.NavigationControl());
 let milepostIconLoaded = false;
 let milepostVisible = true;
 let accessPointsVisible = true;
-let railLinesVisible = false; // hide legacy reference lines by default
+let railLinesVisible = true; // show reference lines by default
 let accessIconLoaded = false;
 let accessPointsFeatures = [];
 let accessPointsReady = false;
@@ -34,6 +34,8 @@ let chainagePointsByLine = new Map();
 let chainagePointsReady = false;
 let lastChainageInterpolation = null;
 let chainageSourceReady = false;
+// Start with reference lines visible on load.
+let railLinesVisible = true;
 
 const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
 const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
