@@ -111,6 +111,47 @@ function applyNearestAccessVisibility() {
   }
 }
 
+class RailLinesControl {
+  onAdd(mapInstance) {
+    this._map = mapInstance;
+    const container = document.createElement('div');
+    container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+    container.style.marginTop = '52px'; // position beneath geolocate control
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Toggle reference lines';
+    button.setAttribute('aria-label', 'Toggle reference lines');
+    button.style.padding = '6px';
+    button.innerHTML =
+      '<svg width="22" height="22" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path fill="#111" d="M28 8h8l8 20h8v4h-6.7l6 15h6.7v4h-5l4 10h-8l-4-10H21l-4 10h-8l4-10H6v-4h6.7l6-15H12v-4h8l8-20zm4 10.2L24.9 32h14.2L32 18.2zm-9.3 23.8-4.8 12h28.2l-4.8-12H22.7z"/></svg>';
+
+    const setActiveState = () => {
+      button.classList.toggle('active', railLinesVisible);
+      button.style.backgroundColor = railLinesVisible ? '#dbeafe' : '#fff';
+    };
+    setActiveState();
+
+    button.addEventListener('click', () => {
+      railLinesVisible = !railLinesVisible;
+      applyRailLinesVisibility();
+      setActiveState();
+    });
+
+    container.appendChild(button);
+    this._button = button;
+    this._container = container;
+    return container;
+  }
+
+  onRemove() {
+    if (this._container?.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+    this._map = undefined;
+  }
+}
+
 async function fetchGeoJSONWithFallback(urls) {
   const errors = [];
   for (const url of urls) {
@@ -468,20 +509,6 @@ function addMilepostToggleControl() {
   container.style.cssText =
     'position:absolute;top:10px;left:10px;z-index:1;background:#fff;padding:8px 10px;border-radius:4px;box-shadow:0 1px 4px rgba(0,0,0,0.2);font-family:sans-serif;font-size:13px;';
 
-  const railLinesCheckbox = document.createElement('input');
-  railLinesCheckbox.type = 'checkbox';
-  railLinesCheckbox.id = 'rail-reference-lines-toggle';
-  railLinesCheckbox.checked = railLinesVisible;
-  railLinesCheckbox.addEventListener('change', () => {
-    railLinesVisible = railLinesCheckbox.checked;
-    applyRailLinesVisibility();
-  });
-
-  const railLinesLabel = document.createElement('label');
-  railLinesLabel.setAttribute('for', 'rail-reference-lines-toggle');
-  railLinesLabel.textContent = 'Show reference lines';
-  railLinesLabel.style.marginLeft = '6px';
-
   const checkbox = document.createElement('input');
   checkbox.type = 'checkbox';
   checkbox.id = 'milepost-toggle';
@@ -536,9 +563,6 @@ function addMilepostToggleControl() {
   nearestLabel.textContent = 'Show nearest access point';
   nearestLabel.style.marginLeft = '6px';
 
-  container.appendChild(railLinesCheckbox);
-  container.appendChild(railLinesLabel);
-  container.appendChild(document.createElement('br'));
   container.appendChild(checkbox);
   container.appendChild(label);
   container.appendChild(apCheckbox);
@@ -558,6 +582,7 @@ const geolocate = new mapboxgl.GeolocateControl({
 });
 
 map.addControl(geolocate);
+map.addControl(new RailLinesControl(), 'top-left');
 geolocate.on('geolocate', (event) => {
   lastUserLocation = [event.coords.longitude, event.coords.latitude];
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
