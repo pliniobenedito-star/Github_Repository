@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rail-chainage-pwa-v1';
+const CACHE_NAME = 'rail-chainage-pwa-v2';
 const ASSETS = [
   '/',
   '/index.html',

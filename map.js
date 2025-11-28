@@ -116,7 +116,7 @@ class RailLinesControl {
     this._map = mapInstance;
     const container = document.createElement('div');
     container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    container.style.marginTop = '12px'; // add breathing room beneath geolocate for touch targets
+    container.style.marginTop = '12px'; // breathing room beneath geolocate for touch targets
 
     const button = document.createElement('button');
     button.type = 'button';
@@ -586,8 +586,8 @@ const geolocate = new mapboxgl.GeolocateControl({
   showUserLocation: true
 });
 
-map.addControl(geolocate);
-map.addControl(new RailLinesControl(), 'top-left');
+map.addControl(geolocate, 'top-right');
+map.addControl(new RailLinesControl(), 'top-right');
 geolocate.on('geolocate', (event) => {
   lastUserLocation = [event.coords.longitude, event.coords.latitude];
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
