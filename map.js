@@ -27,6 +27,7 @@ let lastUserLocation = null;
 let nearestAccessVisible = false; // default off
 let nearestAccessFeature = null;
 let nearestAccessShown = false;
+let nearestAccessPopup = null;
 const lineSegmentsCache = new Map();
 const chainageCalibrationCache = new Map();
 let milepostChainageIndex = new Map();
@@ -283,6 +284,10 @@ class NearestAccessControl {
       } else {
         nearestAccessShown = false;
         applyNearestAccessVisibility();
+        if (nearestAccessPopup) {
+          nearestAccessPopup.remove();
+          nearestAccessPopup = null;
+        }
       }
       applyNearestAccessVisibility();
       setActiveState();
@@ -630,7 +635,10 @@ function showNearestAccessPoint(userLngLat) {
   if (!best) return;
 
   const { ELR, mileage, name, type } = best.properties || {};
-  new mapboxgl.Popup()
+  if (nearestAccessPopup) {
+    nearestAccessPopup.remove();
+  }
+  nearestAccessPopup = new mapboxgl.Popup()
     .setLngLat(best.geometry.coordinates)
     .setHTML(
       `<strong>${name || 'Access Point'}</strong><br/>
@@ -1345,7 +1353,6 @@ map.on('load', () => {
     loadAccessPointsCsv();
     loadRailReferenceLines();
   });
-  addMilepostToggleControl();
   geolocate.trigger(); // Automatically trigger location search on map load
 
   // Clicking anywhere simulates a GPS fix and refreshes interpolation overlays.
