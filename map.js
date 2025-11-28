@@ -247,6 +247,61 @@ class AccessPointsControl {
   }
 }
 
+class NearestAccessControl {
+  onAdd(mapInstance) {
+    this._map = mapInstance;
+    const container = document.createElement('div');
+    container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+    container.style.marginTop = '8px';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Show nearest access point';
+    button.setAttribute('aria-label', 'Show nearest access point');
+    button.style.padding = '4px';
+    button.style.width = '32px';
+    button.style.height = '32px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.innerHTML = '<img src="Icon%20button/Show_access.png" alt="Nearest access" width="22" height="22" />';
+
+    const setActiveState = () => {
+      button.classList.toggle('active', nearestAccessVisible);
+      button.style.backgroundColor = nearestAccessVisible ? '#dbeafe' : '#fff';
+    };
+    setActiveState();
+
+    button.addEventListener('click', () => {
+      nearestAccessVisible = !nearestAccessVisible;
+      if (nearestAccessVisible) {
+        nearestAccessShown = false; // allow one jump after toggling on
+        ensureNearestAccessLayer();
+        if (accessPointsReady && lastUserLocation) {
+          showNearestAccessPoint(lastUserLocation);
+        }
+      } else {
+        nearestAccessShown = false;
+        applyNearestAccessVisibility();
+      }
+      applyNearestAccessVisibility();
+      setActiveState();
+    });
+
+    container.appendChild(button);
+    this._button = button;
+    this._container = container;
+    return container;
+  }
+
+  onRemove() {
+    if (this._container?.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+    this._map = undefined;
+  }
+}
+
 async function fetchGeoJSONWithFallback(urls) {
   const errors = [];
   for (const url of urls) {
@@ -633,37 +688,10 @@ function addMilepostToggleControl() {
   apLabel.textContent = 'Show access points';
   apLabel.style.marginLeft = '6px';
 
-  const nearestCheckbox = document.createElement('input');
-  nearestCheckbox.type = 'checkbox';
-  nearestCheckbox.id = 'nearest-access-toggle';
-  nearestCheckbox.checked = nearestAccessVisible;
-  nearestCheckbox.style.marginLeft = '12px';
-  nearestCheckbox.addEventListener('change', () => {
-    nearestAccessVisible = nearestCheckbox.checked;
-    if (nearestAccessVisible) {
-      nearestAccessShown = false; // allow one jump after toggling on
-      ensureNearestAccessLayer();
-      if (accessPointsReady && lastUserLocation) {
-        showNearestAccessPoint(lastUserLocation);
-      }
-    } else {
-      nearestAccessShown = false;
-      applyNearestAccessVisibility();
-    }
-    applyNearestAccessVisibility();
-  });
-
-  const nearestLabel = document.createElement('label');
-  nearestLabel.setAttribute('for', 'nearest-access-toggle');
-  nearestLabel.textContent = 'Show nearest access point';
-  nearestLabel.style.marginLeft = '6px';
-
   container.appendChild(checkbox);
   container.appendChild(label);
   container.appendChild(apCheckbox);
   container.appendChild(apLabel);
-  container.appendChild(nearestCheckbox);
-  container.appendChild(nearestLabel);
   map.getContainer().appendChild(container);
 }
 
@@ -680,6 +708,7 @@ map.addControl(geolocate, 'top-right');
 map.addControl(new RailLinesControl(), 'top-right');
 map.addControl(new MilepostControl(), 'top-right');
 map.addControl(new AccessPointsControl(), 'top-right');
+map.addControl(new NearestAccessControl(), 'top-right');
 geolocate.on('geolocate', (event) => {
   lastUserLocation = [event.coords.longitude, event.coords.latitude];
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
