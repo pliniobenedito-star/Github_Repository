@@ -33,11 +33,11 @@ let milepostChainageIndex = new Map();
 let chainagePointsByLine = new Map();
 let chainagePointsReady = false;
 let lastChainageInterpolation = null;
+let chainageSourceReady = false;
 
-const NETWORK_RAIL_CHAINAGE_POINTS_URLS = [
-  'NetworkRail_Database/NR_pts_wgs84.geojson',
-  'networkrail_database/NR_pts_wgs84.geojson'
-];
+const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
+const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
+const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -689,20 +689,77 @@ function buildChainagePointIndex(features) {
 
 async function loadChainagePoints() {
   try {
-    console.log('Loading Network Rail chainage points.');
-    const { data: rawGeojson } = await fetchGeoJSONWithFallback(NETWORK_RAIL_CHAINAGE_POINTS_URLS);
-    const geojson = reprojectPointGeoJSONToWgs84(rawGeojson);
-    chainagePointsByLine = buildChainagePointIndex(geojson.features);
-    chainagePointsReady = true;
-    lastChainageInterpolation = null;
-    setInterpolationStatus('Network Rail chainage ready. Move to see your chainage.');
+    console.log('Loading Network Rail chainage points from Mapbox tiles.');
+    if (!map.getSource('chainage-points')) {
+      map.addSource('chainage-points', {
+        type: 'vector',
+        url: CHAINAGE_TILESET_URL
+      });
+    }
+
+    if (!map.getLayer('chainage-points-layer')) {
+      map.addLayer({
+        id: 'chainage-points-layer',
+        type: 'circle',
+        source: 'chainage-points',
+        'source-layer': CHAINAGE_SOURCE_LAYER,
+        minzoom: 0,
+        layout: { visibility: 'visible' },
+        paint: {
+          'circle-radius': 0,
+          'circle-opacity': 0
+        }
+      });
+    }
+
+    chainageSourceReady = true;
+    chainagePointsReady = false;
+    chainagePointsByLine = new Map();
+    setInterpolationStatus('Loading Network Rail chainage points from Mapbox tiles...');
     if (lastUserLocation) {
       updateInterpolationForLocation(lastUserLocation);
     }
   } catch (error) {
-    console.error('Unable to load Network Rail chainage points:', error);
-    setInterpolationStatus('Unable to load Network Rail chainage points.');
+    console.error('Unable to load Network Rail chainage points from Mapbox tiles:', error);
+    setInterpolationStatus('Unable to load Network Rail chainage points from Mapbox.');
   }
+}
+
+function refreshChainagePointsNear(userLngLat) {
+  if (!chainageSourceReady || !map.getSource('chainage-points')) {
+    return false;
+  }
+
+  const features = map.querySourceFeatures('chainage-points', { sourceLayer: CHAINAGE_SOURCE_LAYER }) || [];
+  if (!features.length) {
+    chainagePointsReady = false;
+    return false;
+  }
+
+  const filtered = [];
+  for (const feature of features) {
+    const coords = feature?.geometry?.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) continue;
+    if (userLngLat) {
+      const distance = haversineDistance(userLngLat, coords);
+      if (!Number.isFinite(distance) || distance > CHAINAGE_SEARCH_RADIUS_METERS) continue;
+    }
+    filtered.push({
+      type: 'Feature',
+      geometry: feature.geometry,
+      properties: feature.properties
+    });
+  }
+
+  if (!filtered.length) {
+    chainagePointsReady = false;
+    return false;
+  }
+
+  chainagePointsByLine = buildChainagePointIndex(filtered);
+  chainagePointsReady = chainagePointsByLine.size > 0;
+  lastChainageInterpolation = null;
+  return chainagePointsReady;
 }
 
 function projectToSegmentRatio(startLngLat, endLngLat, targetLngLat) {
@@ -820,10 +877,22 @@ function renderChainageInterpolationResult(result) {
 
 function updateInterpolationForLocation(userLngLat) {
   if (!userLngLat) return;
-  if (!chainagePointsReady) {
-    setInterpolationStatus('Network Rail chainage points are still loading...');
+  if (!chainageSourceReady) {
+    setInterpolationStatus('Loading Network Rail chainage tiles...');
     return;
   }
+
+  const refreshed = refreshChainagePointsNear(userLngLat);
+  if (!refreshed) {
+    setInterpolationStatus('Network Rail chainage points are still loading from Mapbox tiles...');
+    map.once('idle', () => {
+      if (lastUserLocation) {
+        updateInterpolationForLocation(lastUserLocation);
+      }
+    });
+    return;
+  }
+
   const result = interpolateChainageFromNetworkRail(userLngLat);
   renderChainageInterpolationResult(result);
 }
