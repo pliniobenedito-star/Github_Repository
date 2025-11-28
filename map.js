@@ -34,8 +34,6 @@ let chainagePointsByLine = new Map();
 let chainagePointsReady = false;
 let lastChainageInterpolation = null;
 let chainageSourceReady = false;
-// Start with reference lines visible on load.
-let railLinesVisible = true;
 
 const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
 const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
@@ -141,6 +139,96 @@ class RailLinesControl {
     button.addEventListener('click', () => {
       railLinesVisible = !railLinesVisible;
       applyRailLinesVisibility();
+      setActiveState();
+    });
+
+    container.appendChild(button);
+    this._button = button;
+    this._container = container;
+    return container;
+  }
+
+  onRemove() {
+    if (this._container?.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+    this._map = undefined;
+  }
+}
+
+class MilepostControl {
+  onAdd(mapInstance) {
+    this._map = mapInstance;
+    const container = document.createElement('div');
+    container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+    container.style.marginTop = '8px';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Toggle mileposts';
+    button.setAttribute('aria-label', 'Toggle mileposts');
+    button.style.padding = '4px';
+    button.style.width = '32px';
+    button.style.height = '32px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.innerHTML = '<img src="Icon%20button/milepost_icon.png" alt="Mileposts" width="22" height="22" />';
+
+    const setActiveState = () => {
+      button.classList.toggle('active', milepostVisible);
+      button.style.backgroundColor = milepostVisible ? '#dbeafe' : '#fff';
+    };
+    setActiveState();
+
+    button.addEventListener('click', () => {
+      milepostVisible = !milepostVisible;
+      applyMilepostVisibility();
+      setActiveState();
+    });
+
+    container.appendChild(button);
+    this._button = button;
+    this._container = container;
+    return container;
+  }
+
+  onRemove() {
+    if (this._container?.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+    this._map = undefined;
+  }
+}
+
+class AccessPointsControl {
+  onAdd(mapInstance) {
+    this._map = mapInstance;
+    const container = document.createElement('div');
+    container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+    container.style.marginTop = '8px';
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Toggle access points';
+    button.setAttribute('aria-label', 'Toggle access points');
+    button.style.padding = '4px';
+    button.style.width = '32px';
+    button.style.height = '32px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.innerHTML = '<img src="Icon%20button/access_icon.png" alt="Access points" width="22" height="22" />';
+
+    const setActiveState = () => {
+      button.classList.toggle('active', accessPointsVisible);
+      button.style.backgroundColor = accessPointsVisible ? '#dbeafe' : '#fff';
+    };
+    setActiveState();
+
+    button.addEventListener('click', () => {
+      accessPointsVisible = !accessPointsVisible;
+      applyAccessPointsVisibility();
       setActiveState();
     });
 
@@ -589,6 +677,8 @@ const geolocate = new mapboxgl.GeolocateControl({
 
 map.addControl(geolocate, 'top-right');
 map.addControl(new RailLinesControl(), 'top-right');
+map.addControl(new MilepostControl(), 'top-right');
+map.addControl(new AccessPointsControl(), 'top-right');
 geolocate.on('geolocate', (event) => {
   lastUserLocation = [event.coords.longitude, event.coords.latitude];
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
