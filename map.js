@@ -6,12 +6,22 @@ if (!window.MAPBOX_TOKEN || window.MAPBOX_TOKEN === 'pk.eyJ1IjoicGxpbmlvLXBpY2Np
 
 mapboxgl.accessToken = window.MAPBOX_TOKEN;
 
+const CONTROL_SCALE = 1.5;
+const CUSTOM_CONTROL_SIZE = Math.round(32 * CONTROL_SCALE); // previously 32px
+const CUSTOM_ICON_SIZE = Math.round(22 * CONTROL_SCALE); // previously 22px
+const CUSTOM_PADDING = Math.round(4 * CONTROL_SCALE); // previously 4px
+const CUSTOM_MARGIN_SMALL = Math.round(8 * CONTROL_SCALE); // previously 8px
+const CUSTOM_MARGIN_LARGE = Math.round(12 * CONTROL_SCALE); // previously 12px
+const MAPBOX_CONTROL_SIZE = Math.round(29 * CONTROL_SCALE); // Mapbox default is 29px
+
 const map = new mapboxgl.Map({
   container: 'map',
   style: 'mapbox://styles/plinio-piccin/cmhw00fii000m01qwcuwq9yje', // neutral demo style that works with Mapbox GL-compatible runtimes
   center: [-2.639, 53.480],
   zoom: 15
 });
+
+applyControlSizingOverrides();
 
 // Add a default navigation control (zoom buttons)
 map.addControl(new mapboxgl.NavigationControl());
@@ -39,6 +49,17 @@ let chainageSourceReady = false;
 const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
 const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
 const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
+
+function applyControlSizingOverrides() {
+  const style = document.createElement('style');
+  style.textContent = `
+    .mapboxgl-ctrl-top-right .mapboxgl-ctrl-group button {
+      width: ${MAPBOX_CONTROL_SIZE}px;
+      height: ${MAPBOX_CONTROL_SIZE}px;
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 async function ensureMilepostIcon() {
   if (milepostIconLoaded || map.hasImage('milepost-icon')) return;
@@ -117,20 +138,19 @@ class RailLinesControl {
     this._map = mapInstance;
     const container = document.createElement('div');
     container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    container.style.marginTop = '12px'; // breathing room beneath geolocate for touch targets
+    container.style.marginTop = `${CUSTOM_MARGIN_LARGE}px`; // breathing room beneath geolocate for touch targets
 
     const button = document.createElement('button');
     button.type = 'button';
     button.title = 'Toggle reference lines';
     button.setAttribute('aria-label', 'Toggle reference lines');
-    button.style.padding = '4px';
-    button.style.width = '32px';
-    button.style.height = '32px';
+    button.style.padding = `${CUSTOM_PADDING}px`;
+    button.style.width = `${CUSTOM_CONTROL_SIZE}px`;
+    button.style.height = `${CUSTOM_CONTROL_SIZE}px`;
     button.style.display = 'flex';
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
-    button.innerHTML =
-      '<img src="Icon%20button/Reference_line.png" alt="Rail lines" width="22" height="22" />';
+    button.innerHTML = `<img src="Icon%20button/Reference_line.png" alt="Rail lines" width="${CUSTOM_ICON_SIZE}" height="${CUSTOM_ICON_SIZE}" />`;
 
     const setActiveState = () => {
       button.classList.toggle('active', railLinesVisible);
@@ -163,19 +183,19 @@ class MilepostControl {
     this._map = mapInstance;
     const container = document.createElement('div');
     container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    container.style.marginTop = '8px';
+    container.style.marginTop = `${CUSTOM_MARGIN_SMALL}px`;
 
     const button = document.createElement('button');
     button.type = 'button';
     button.title = 'Toggle mileposts';
     button.setAttribute('aria-label', 'Toggle mileposts');
-    button.style.padding = '4px';
-    button.style.width = '32px';
-    button.style.height = '32px';
+    button.style.padding = `${CUSTOM_PADDING}px`;
+    button.style.width = `${CUSTOM_CONTROL_SIZE}px`;
+    button.style.height = `${CUSTOM_CONTROL_SIZE}px`;
     button.style.display = 'flex';
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
-    button.innerHTML = '<img src="Icon%20button/milepost_icon.png" alt="Mileposts" width="22" height="22" />';
+    button.innerHTML = `<img src="Icon%20button/milepost_icon.png" alt="Mileposts" width="${CUSTOM_ICON_SIZE}" height="${CUSTOM_ICON_SIZE}" />`;
 
     const setActiveState = () => {
       button.classList.toggle('active', milepostVisible);
@@ -208,19 +228,19 @@ class AccessPointsControl {
     this._map = mapInstance;
     const container = document.createElement('div');
     container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    container.style.marginTop = '8px';
+    container.style.marginTop = `${CUSTOM_MARGIN_SMALL}px`;
 
     const button = document.createElement('button');
     button.type = 'button';
     button.title = 'Toggle access points';
     button.setAttribute('aria-label', 'Toggle access points');
-    button.style.padding = '4px';
-    button.style.width = '32px';
-    button.style.height = '32px';
+    button.style.padding = `${CUSTOM_PADDING}px`;
+    button.style.width = `${CUSTOM_CONTROL_SIZE}px`;
+    button.style.height = `${CUSTOM_CONTROL_SIZE}px`;
     button.style.display = 'flex';
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
-    button.innerHTML = '<img src="Icon%20button/access_icon.png" alt="Access points" width="22" height="22" />';
+    button.innerHTML = `<img src="Icon%20button/access_icon.png" alt="Access points" width="${CUSTOM_ICON_SIZE}" height="${CUSTOM_ICON_SIZE}" />`;
 
     const setActiveState = () => {
       button.classList.toggle('active', accessPointsVisible);
@@ -253,19 +273,19 @@ class NearestAccessControl {
     this._map = mapInstance;
     const container = document.createElement('div');
     container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
-    container.style.marginTop = '8px';
+    container.style.marginTop = `${CUSTOM_MARGIN_SMALL}px`;
 
     const button = document.createElement('button');
     button.type = 'button';
     button.title = 'Show nearest access point';
     button.setAttribute('aria-label', 'Show nearest access point');
-    button.style.padding = '4px';
-    button.style.width = '32px';
-    button.style.height = '32px';
+    button.style.padding = `${CUSTOM_PADDING}px`;
+    button.style.width = `${CUSTOM_CONTROL_SIZE}px`;
+    button.style.height = `${CUSTOM_CONTROL_SIZE}px`;
     button.style.display = 'flex';
     button.style.alignItems = 'center';
     button.style.justifyContent = 'center';
-    button.innerHTML = '<img src="Icon%20button/Show_access.png" alt="Nearest access" width="22" height="22" />';
+    button.innerHTML = `<img src="Icon%20button/Show_access.png" alt="Nearest access" width="${CUSTOM_ICON_SIZE}" height="${CUSTOM_ICON_SIZE}" />`;
 
     const setActiveState = () => {
       button.classList.toggle('active', nearestAccessVisible);
@@ -1026,12 +1046,8 @@ function renderChainageInterpolationResult(result) {
     return;
   }
   const chainText = formatMetersValue(result.chainMeters);
-  const milesText = formatMilesFromMeters(result.chainMeters);
-  const yardsText = formatYardsFromMeters(result.chainMeters);
-  const distanceText = Number.isFinite(result.distanceMeters)
-    ? `+/-${result.distanceMeters.toFixed(1)} m`
-    : 'distance N/A';
-  setInterpolationStatus(`Network Rail chainage: ${chainText} | ${milesText} | ${yardsText} (${distanceText})`);
+  const milesYardsText = formatMilesAndYardsFromMeters(result.chainMeters);
+  setInterpolationStatus(`Network Rail chainage: ${chainText} | ${milesYardsText}`);
 }
 
 function updateInterpolationForLocation(userLngLat) {
@@ -1110,6 +1126,17 @@ function formatMilesYardsFromMeters(meters) {
   const yards = Math.round((meters - miles * METERS_PER_MILE) / METERS_PER_YARD);
   const yardsPadded = String(Math.max(0, yards)).padStart(4, '0');
   return `${miles}m ${yardsPadded}yds`;
+}
+
+function formatMilesAndYardsFromMeters(meters) {
+  if (!Number.isFinite(meters)) return 'N/A';
+  let miles = Math.floor(meters / METERS_PER_MILE);
+  let yards = Math.round((meters - miles * METERS_PER_MILE) / METERS_PER_YARD);
+  if (yards >= 1760) {
+    miles += 1;
+    yards -= 1760;
+  }
+  return `${miles} mile${miles === 1 ? '' : 's'} ${yards} yards`;
 }
 
 // Utility: approximate a mileage at a clicked point along a line/multiline
