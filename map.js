@@ -49,6 +49,10 @@ let chainageSourceReady = false;
 const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
 const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
 const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
+const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
+const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
+const TRACK_ID_MINZOOM = 14;
+const RAIL_REFERENCE_MAX_ZOOM = 13.9;
 
 function applyControlSizingOverrides() {
   const style = document.createElement('style');
@@ -113,7 +117,7 @@ function applyAccessPointsVisibility() {
 
 function applyRailLinesVisibility() {
   const visibility = railLinesVisible ? 'visible' : 'none';
-  ['rail-reference-lines-layer', 'rail-reference-lines-label'].forEach((layerId) => {
+  ['rail-reference-lines-layer', 'rail-reference-lines-label', 'track-identification-lines'].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
@@ -1020,23 +1024,62 @@ function interpolateChainageFromNetworkRail(userLngLat) {
 }
 
 let interpolationStatusEl = null;
+let interpolationFillEl = null;
+let interpolationSrText = null;
+
+function ensureInterpolationStyles() {
+  if (document.getElementById('interpolation-style')) return;
+  const style = document.createElement('style');
+  style.id = 'interpolation-style';
+  style.textContent = `
+    @keyframes interpolation-indeterminate {
+      0% { transform: translateX(-40%); }
+      50% { transform: translateX(60%); }
+      100% { transform: translateX(160%); }
+    }
+  `;
+  document.head.appendChild(style);
+}
 
 function addInterpolationStatusControl() {
   if (interpolationStatusEl) return;
+  ensureInterpolationStyles();
   const container = document.createElement('div');
   container.style.cssText =
-    'position:absolute;left:50%;bottom:16px;transform:translateX(-50%);z-index:1;background:#fff;padding:10px 12px;border-radius:10px;box-shadow:0 2px 10px rgba(0,0,0,0.25);font-family:sans-serif;font-size:13px;max-width:360px;line-height:1.4;white-space:pre-line;text-align:center;';
-  container.textContent = 'Loading Network Rail chainage points...';
+    'position:absolute;top:0;left:0;right:0;z-index:2;pointer-events:none;padding:6px 12px;';
+
+  const track = document.createElement('div');
+  track.style.cssText =
+    'width:100%;height:6px;background:rgba(229,231,235,0.9);border-radius:999px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);';
+
+  const fill = document.createElement('div');
+  fill.style.cssText =
+    'width:40%;height:100%;background:linear-gradient(90deg,#60a5fa,#2563eb,#60a5fa);animation:interpolation-indeterminate 1.1s linear infinite;border-radius:inherit;';
+  track.appendChild(fill);
+
+  const srText = document.createElement('span');
+  srText.style.cssText = 'position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;';
+  srText.textContent = 'Loading Network Rail chainage points...';
+
+  container.appendChild(track);
+  container.appendChild(srText);
+  container.style.display = 'none';
   interpolationStatusEl = container;
+  interpolationFillEl = fill;
+  interpolationSrText = srText;
   map.getContainer().appendChild(container);
 }
 
 function setInterpolationStatus(message) {
-  if (interpolationStatusEl) {
-    interpolationStatusEl.textContent = message;
-  } else {
+  if (!interpolationStatusEl) {
     console.log(message);
+    return;
   }
+  if (interpolationSrText) {
+    interpolationSrText.textContent = message || '';
+  }
+  const isLoading = typeof message === 'string' && /loading/i.test(message);
+  interpolationStatusEl.style.display = isLoading ? 'block' : 'none';
 }
 
 function renderChainageInterpolationResult(result) {
@@ -1246,6 +1289,109 @@ function mergeProjectedMilepostsWithOriginal(projectedGeojson, originalGeojson) 
   return { ...projectedGeojson, features: mergedFeatures };
 }
 
+function describeTrackCode(trcodeRaw) {
+  if (trcodeRaw === null || trcodeRaw === undefined) return 'Unknown';
+  const codeStr = String(trcodeRaw).trim();
+  if (!codeStr) return 'Unknown';
+
+  const overrides = {
+    '99': 'Siding',
+    '39': 'Siding',
+    '38': 'Bi-Directional',
+    '49': 'Siding'
+  };
+  if (overrides[codeStr]) {
+    return overrides[codeStr];
+  }
+
+  const directionMap = { '1': 'Up', '2': 'Down', '3': 'Bi-Directional', '4': 'Loop' };
+  const trackTypeMap = {
+    '1': 'Main',
+    '2': 'Relief',
+    '3': 'Goods',
+    '4': 'Single',
+    '5': 'Loop',
+    '6': 'Bay Line',
+    '7': 'Crossover',
+    '8': 'Other',
+    '9': 'Siding'
+  };
+
+  const direction = directionMap[codeStr[0]];
+  const trackType = trackTypeMap[codeStr[1]];
+  if (direction || trackType) {
+    return [direction, trackType].filter(Boolean).join(' ');
+  }
+  return 'Unknown';
+}
+
+async function loadTrackIdentificationLines() {
+  try {
+    console.log('Loading track identification lines.');
+    if (!map.getSource('track-identification')) {
+      map.addSource('track-identification', {
+        type: 'vector',
+        url: TRACK_ID_TILESET_URL
+      });
+    }
+
+    if (!map.getLayer('track-identification-lines')) {
+      map.addLayer({
+        id: 'track-identification-lines',
+        type: 'line',
+        source: 'track-identification',
+        'source-layer': TRACK_ID_SOURCE_LAYER,
+        minzoom: TRACK_ID_MINZOOM,
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+          visibility: railLinesVisible ? 'visible' : 'none'
+        },
+        paint: {
+          'line-color': '#1d4ed8',
+          'line-width': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            TRACK_ID_MINZOOM,
+            2.25,
+            TRACK_ID_MINZOOM + 2,
+            3.5,
+            TRACK_ID_MINZOOM + 4,
+            5
+          ],
+          'line-opacity': 0.9
+        }
+      });
+
+      map.on('click', 'track-identification-lines', (event) => {
+        const feature = event.features?.[0];
+        if (!feature) return;
+        const trcode = feature.properties?.TRCODE ?? feature.properties?.trcode ?? feature.properties?.tr_code;
+        const description = describeTrackCode(trcode);
+        new mapboxgl.Popup()
+          .setLngLat(event.lngLat)
+          .setHTML(
+            `<strong>TRCODE:</strong> ${trcode ?? 'N/A'}<br/>` +
+              `<strong>Track:</strong> ${description}`
+          )
+          .addTo(map);
+      });
+
+      map.on('mouseenter', 'track-identification-lines', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mouseleave', 'track-identification-lines', () => {
+        map.getCanvas().style.cursor = '';
+      });
+    }
+
+    applyRailLinesVisibility();
+  } catch (error) {
+    console.error('Unable to load track identification lines:', error);
+  }
+}
+
 async function loadRailReferenceLines() {
   try {
     console.log('Loading rail reference lines.');
@@ -1281,6 +1427,7 @@ async function loadRailReferenceLines() {
       id: 'rail-reference-lines-layer',
       type: 'line',
       source: 'rail-reference-lines',
+      maxzoom: RAIL_REFERENCE_MAX_ZOOM,
       layout: {
         'line-cap': 'round',
         'line-join': 'round'
@@ -1307,6 +1454,7 @@ async function loadRailReferenceLines() {
       type: 'symbol',
       source: 'rail-reference-lines',
       minzoom: 9,
+      maxzoom: RAIL_REFERENCE_MAX_ZOOM,
       layout: {
         'symbol-placement': 'line',
         'symbol-spacing': 200,
@@ -1379,6 +1527,7 @@ map.on('load', () => {
     loadMileageCsv();
     loadAccessPointsCsv();
     loadRailReferenceLines();
+    loadTrackIdentificationLines();
   });
   geolocate.trigger(); // Automatically trigger location search on map load
 
