@@ -45,6 +45,7 @@ let chainagePointsByLine = new Map();
 let chainagePointsReady = false;
 let lastChainageInterpolation = null;
 let chainageSourceReady = false;
+let fallbackChainageShown = false;
 
 const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
 const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
@@ -52,6 +53,11 @@ const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
 const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
 const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
 const TRACK_ID_MINZOOM = 14;
+const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM + 1.5;
+const OVERVIEW_RAIL_TILESET_URL = 'mapbox://plinio-piccin.76fsxt78';
+const OVERVIEW_RAIL_SOURCE_LAYER = 'railway_lines_wgs84-d26b87';
+const OVERVIEW_RAIL_MINZOOM = 6;
+const OVERVIEW_RAIL_MAXZOOM = TRACK_ID_MINZOOM - 0.1;
 const RAIL_REFERENCE_MAX_ZOOM = 13.9;
 
 function applyControlSizingOverrides() {
@@ -117,7 +123,13 @@ function applyAccessPointsVisibility() {
 
 function applyRailLinesVisibility() {
   const visibility = railLinesVisible ? 'visible' : 'none';
-  ['rail-reference-lines-layer', 'rail-reference-lines-label', 'track-identification-lines'].forEach((layerId) => {
+  [
+    'rail-reference-lines-layer',
+    'rail-reference-lines-label',
+    'overview-rail-lines',
+    'track-identification-lines',
+    'track-identification-labels'
+  ].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.setLayoutProperty(layerId, 'visibility', visibility);
     }
@@ -746,7 +758,18 @@ geolocate.on('geolocate', (event) => {
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
     showNearestAccessPoint(lastUserLocation);
   }
-  updateInterpolationForLocation(lastUserLocation);
+  updateInterpolationForLocation(lastUserLocation, 'Your location chainage');
+});
+
+geolocate.on('error', () => {
+  setInterpolationStatus('Location unavailable. Tap the map to see chainage there, or enable location services.');
+  const center = map.getCenter();
+  const fallbackLocation = [center.lng, center.lat];
+  fallbackChainageShown = true;
+  updateInterpolationForLocation(
+    fallbackLocation,
+    'Map center chainage (tap map or enable location to update for you)'
+  );
 });
 
 function ensureOsgbProjection() {
@@ -900,7 +923,15 @@ async function loadChainagePoints() {
     chainagePointsByLine = new Map();
     setInterpolationStatus('Loading Network Rail chainage points from Mapbox tiles...');
     if (lastUserLocation) {
-      updateInterpolationForLocation(lastUserLocation);
+      updateInterpolationForLocation(lastUserLocation, 'Your location chainage');
+    } else if (!fallbackChainageShown) {
+      const center = map.getCenter();
+      const fallbackLocation = [center.lng, center.lat];
+      fallbackChainageShown = true;
+      updateInterpolationForLocation(
+        fallbackLocation,
+        'Map center chainage (tap map or enable location to update for you)'
+      );
     }
   } catch (error) {
     console.error('Unable to load Network Rail chainage points from Mapbox tiles:', error);
@@ -1026,6 +1057,7 @@ function interpolateChainageFromNetworkRail(userLngLat) {
 let interpolationStatusEl = null;
 let interpolationFillEl = null;
 let interpolationSrText = null;
+let interpolationTextEl = null;
 
 function ensureInterpolationStyles() {
   if (document.getElementById('interpolation-style')) return;
@@ -1057,16 +1089,23 @@ function addInterpolationStatusControl() {
     'width:40%;height:100%;background:linear-gradient(90deg,#60a5fa,#2563eb,#60a5fa);animation:interpolation-indeterminate 1.1s linear infinite;border-radius:inherit;';
   track.appendChild(fill);
 
+  const text = document.createElement('div');
+  text.style.cssText =
+    'display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;background:rgba(15,23,42,0.88);color:#e5e7eb;border-radius:999px;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.15);pointer-events:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;';
+  text.textContent = 'Loading Network Rail chainage points...';
+
   const srText = document.createElement('span');
   srText.style.cssText = 'position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;';
   srText.textContent = 'Loading Network Rail chainage points...';
 
   container.appendChild(track);
+  container.appendChild(text);
   container.appendChild(srText);
   container.style.display = 'none';
   interpolationStatusEl = container;
   interpolationFillEl = fill;
   interpolationSrText = srText;
+  interpolationTextEl = text;
   map.getContainer().appendChild(container);
 }
 
@@ -1075,26 +1114,39 @@ function setInterpolationStatus(message) {
     console.log(message);
     return;
   }
+  const text = message || '';
   if (interpolationSrText) {
-    interpolationSrText.textContent = message || '';
+    interpolationSrText.textContent = text;
+  }
+  if (interpolationTextEl) {
+    interpolationTextEl.textContent = text;
   }
   const isLoading = typeof message === 'string' && /loading/i.test(message);
-  interpolationStatusEl.style.display = isLoading ? 'block' : 'none';
+  if (interpolationFillEl) {
+    interpolationFillEl.style.animation = isLoading ? 'interpolation-indeterminate 1.1s linear infinite' : 'none';
+    interpolationFillEl.style.width = isLoading ? '40%' : '100%';
+    interpolationFillEl.style.opacity = isLoading ? '1' : '0.55';
+  }
+  const hasMessage = text.trim().length > 0;
+  interpolationStatusEl.style.display = hasMessage ? 'block' : 'none';
 }
 
-function renderChainageInterpolationResult(result) {
+function renderChainageInterpolationResult(result, contextLabel = 'Network Rail chainage') {
   lastChainageInterpolation = result;
   if (!result) {
-    setInterpolationStatus('Network Rail chainage not available near you.');
+    setInterpolationStatus(`${contextLabel} not available near you.`);
     return;
   }
   const chainText = formatMetersValue(result.chainMeters);
   const milesYardsText = formatMilesAndYardsFromMeters(result.chainMeters);
-  setInterpolationStatus(`Network Rail chainage: ${chainText} | ${milesYardsText}`);
+  setInterpolationStatus(`${contextLabel}: ${chainText} | ${milesYardsText}`);
 }
 
-function updateInterpolationForLocation(userLngLat) {
-  if (!userLngLat) return;
+function updateInterpolationForLocation(userLngLat, contextLabel = 'Network Rail chainage') {
+  if (!userLngLat) {
+    setInterpolationStatus('Tap the map or enable location services to see chainage at your position.');
+    return;
+  }
   if (!chainageSourceReady) {
     setInterpolationStatus('Loading Network Rail chainage tiles...');
     return;
@@ -1104,15 +1156,13 @@ function updateInterpolationForLocation(userLngLat) {
   if (!refreshed) {
     setInterpolationStatus('Network Rail chainage points are still loading from Mapbox tiles...');
     map.once('idle', () => {
-      if (lastUserLocation) {
-        updateInterpolationForLocation(lastUserLocation);
-      }
+      updateInterpolationForLocation(userLngLat, contextLabel);
     });
     return;
   }
 
   const result = interpolateChainageFromNetworkRail(userLngLat);
-  renderChainageInterpolationResult(result);
+  renderChainageInterpolationResult(result, contextLabel);
 }
 function parseCoordText(text) {
   if (!text) return null;
@@ -1335,6 +1385,94 @@ async function loadTrackIdentificationLines() {
       });
     }
 
+    const trcodeValue = [
+      'coalesce',
+      ['to-string', ['get', 'TRCODE']],
+      ['to-string', ['get', 'trcode']],
+      ['to-string', ['get', 'tr_code']],
+      ''
+    ];
+    const trackLabelExpression = [
+      'match',
+      trcodeValue,
+      '11',
+      'Up Main',
+      '12',
+      'Up Relief',
+      '13',
+      'Up Goods',
+      '14',
+      'Up Single',
+      '15',
+      'Up Loop',
+      '16',
+      'Up Bay Line',
+      '17',
+      'Up Crossover',
+      '18',
+      'Up Other',
+      '19',
+      'Up Siding',
+      '21',
+      'Down Main',
+      '22',
+      'Down Relief',
+      '23',
+      'Down Goods',
+      '24',
+      'Down Single',
+      '25',
+      'Down Loop',
+      '26',
+      'Down Bay Line',
+      '27',
+      'Down Crossover',
+      '28',
+      'Down Other',
+      '29',
+      'Down Siding',
+      '31',
+      'Bi-Directional Main',
+      '32',
+      'Bi-Directional Relief',
+      '33',
+      'Bi-Directional Goods',
+      '34',
+      'Bi-Directional Single',
+      '35',
+      'Bi-Directional Loop',
+      '36',
+      'Bi-Directional Bay Line',
+      '37',
+      'Bi-Directional Crossover',
+      '38',
+      'Bi-Directional',
+      '39',
+      'Siding',
+      '41',
+      'Loop Main',
+      '42',
+      'Loop Relief',
+      '43',
+      'Loop Goods',
+      '44',
+      'Loop Single',
+      '45',
+      'Loop Loop',
+      '46',
+      'Loop Bay Line',
+      '47',
+      'Loop Crossover',
+      '48',
+      'Loop Other',
+      '49',
+      'Siding',
+      '99',
+      'Siding',
+      'Unknown'
+    ];
+    const trackLabelField = ['case', ['==', trackLabelExpression, 'Unknown'], '', trackLabelExpression];
+
     if (!map.getLayer('track-identification-lines')) {
       map.addLayer({
         id: 'track-identification-lines',
@@ -1364,6 +1502,42 @@ async function loadTrackIdentificationLines() {
         }
       });
 
+      if (!map.getLayer('track-identification-labels')) {
+        map.addLayer({
+          id: 'track-identification-labels',
+          type: 'symbol',
+          source: 'track-identification',
+          'source-layer': TRACK_ID_SOURCE_LAYER,
+          minzoom: TRACK_ID_LABEL_MINZOOM,
+          layout: {
+            'symbol-placement': 'line',
+            'symbol-spacing': 250,
+            'text-field': trackLabelField,
+            'text-size': [
+              'interpolate',
+              ['linear'],
+              ['zoom'],
+              TRACK_ID_LABEL_MINZOOM,
+              12,
+              TRACK_ID_LABEL_MINZOOM + 2,
+              14.5,
+              TRACK_ID_LABEL_MINZOOM + 4,
+              16
+            ],
+            'text-allow-overlap': false,
+            'text-keep-upright': true,
+            'text-pitch-alignment': 'map',
+            'text-rotation-alignment': 'map',
+            visibility: railLinesVisible ? 'visible' : 'none'
+          },
+          paint: {
+            'text-color': '#0f172a',
+            'text-halo-color': '#e5e7eb',
+            'text-halo-width': 1.2
+          }
+        });
+      }
+
       map.on('click', 'track-identification-lines', (event) => {
         const feature = event.features?.[0];
         if (!feature) return;
@@ -1389,6 +1563,55 @@ async function loadTrackIdentificationLines() {
     applyRailLinesVisibility();
   } catch (error) {
     console.error('Unable to load track identification lines:', error);
+  }
+}
+
+async function loadOverviewRailLines() {
+  try {
+    console.log('Loading overview railway lines.');
+    if (!map.getSource('overview-rail-lines')) {
+      map.addSource('overview-rail-lines', {
+        type: 'vector',
+        url: OVERVIEW_RAIL_TILESET_URL
+      });
+    }
+
+    if (!map.getLayer('overview-rail-lines')) {
+      map.addLayer({
+        id: 'overview-rail-lines',
+        type: 'line',
+        source: 'overview-rail-lines',
+        'source-layer': OVERVIEW_RAIL_SOURCE_LAYER,
+        minzoom: OVERVIEW_RAIL_MINZOOM,
+        maxzoom: OVERVIEW_RAIL_MAXZOOM,
+        layout: {
+          'line-cap': 'round',
+          'line-join': 'round',
+          visibility: railLinesVisible ? 'visible' : 'none'
+        },
+        paint: {
+          'line-color': '#2563eb',
+          'line-width': [
+            'interpolate',
+            ['linear'],
+            ['zoom'],
+            OVERVIEW_RAIL_MINZOOM,
+            1.1,
+            10,
+            2.25,
+            12.5,
+            3.4,
+            OVERVIEW_RAIL_MAXZOOM,
+            3.75
+          ],
+          'line-opacity': 0.8
+        }
+      });
+    }
+
+    applyRailLinesVisibility();
+  } catch (error) {
+    console.error('Unable to load overview railway lines:', error);
   }
 }
 
@@ -1527,6 +1750,7 @@ map.on('load', () => {
     loadMileageCsv();
     loadAccessPointsCsv();
     loadRailReferenceLines();
+    loadOverviewRailLines();
     loadTrackIdentificationLines();
   });
   geolocate.trigger(); // Automatically trigger location search on map load
@@ -1534,7 +1758,7 @@ map.on('load', () => {
   // Clicking anywhere simulates a GPS fix and refreshes interpolation overlays.
   map.on('click', (event) => {
     lastUserLocation = [event.lngLat.lng, event.lngLat.lat];
-    updateInterpolationForLocation(lastUserLocation);
+    updateInterpolationForLocation(lastUserLocation, 'Chainage at clicked point');
   });
 });
 
@@ -1732,5 +1956,3 @@ async function loadAccessPointsCsv() {
     console.error('Unable to load access points CSV:', error);
   }
 }
-
-
