@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rail-chainage-pwa-v10';
+const CACHE_NAME = 'rail-chainage-pwa-v11';
 
 const SCOPE_URL = self.registration?.scope ?? self.location.href;
 const SCOPE_PATH = new URL(SCOPE_URL).pathname;

@@ -26,6 +26,11 @@ applyControlSizingOverrides();
 // Add a default navigation control (zoom buttons)
 map.addControl(new mapboxgl.NavigationControl());
 
+// Keep the overview/detailed tileset switch in sync with the current zoom.
+map.on('zoomend', () => {
+  applyRailLinesVisibility();
+});
+
 let milepostIconLoaded = false;
 let milepostVisible = true;
 let accessPointsVisible = true;
@@ -125,18 +130,23 @@ function applyAccessPointsVisibility() {
 }
 
 function applyRailLinesVisibility() {
-  const visibility = railLinesVisible ? 'visible' : 'none';
-  [
-    'rail-reference-lines-layer',
-    'rail-reference-lines-label',
-    'overview-rail-lines',
-    'track-identification-lines',
-    'track-identification-labels'
-  ].forEach((layerId) => {
-    if (map.getLayer(layerId)) {
-      map.setLayoutProperty(layerId, 'visibility', visibility);
-    }
-  });
+  const zoom = Number(map.getZoom());
+  const showOverview = Number.isFinite(zoom) ? zoom < RAIL_TILESET_SWITCH_ZOOM : true;
+  const showDetailed = Number.isFinite(zoom) ? zoom >= RAIL_TILESET_SWITCH_ZOOM : true;
+
+  const setVisibility = (layerId, isVisible) => {
+    if (!map.getLayer(layerId)) return;
+    map.setLayoutProperty(layerId, 'visibility', isVisible ? 'visible' : 'none');
+  };
+
+  // Always show/hide reference lines based on the toggle.
+  setVisibility('rail-reference-lines-layer', railLinesVisible);
+  setVisibility('rail-reference-lines-label', railLinesVisible);
+
+  // Only show ONE tileset at a time: overview when zoomed out, detailed when zoomed in.
+  setVisibility('overview-rail-lines', railLinesVisible && showOverview);
+  setVisibility('track-identification-lines', railLinesVisible && showDetailed);
+  setVisibility('track-identification-labels', railLinesVisible && showDetailed);
 }
 
 function applyNearestAccessVisibility() {
