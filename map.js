@@ -52,7 +52,10 @@ const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
 const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
 const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
 const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
-const TRACK_ID_MINZOOM = 14;
+// Switch to the detailed track-identification tileset only when zoomed in close.
+// (Keeps the overview tileset visible for longer while zooming in.)
+// Your map opens around zoom 15; setting this to 20 means the switch happens ~5 zoom levels later.
+const TRACK_ID_MINZOOM = 20;
 const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM + 1.5;
 const OVERVIEW_RAIL_TILESET_URL = 'mapbox://plinio-piccin.76fsxt78';
 const OVERVIEW_RAIL_SOURCE_LAYER = 'railway_lines_wgs84-d26b87';
@@ -1088,11 +1091,11 @@ function addInterpolationStatusControl() {
   ensureInterpolationStyles();
   const container = document.createElement('div');
   container.style.cssText =
-    'position:absolute;top:0;left:0;right:0;z-index:2;pointer-events:none;padding:6px 12px;';
+    'position:absolute;left:0;right:0;bottom:0;z-index:2;pointer-events:none;';
 
   const track = document.createElement('div');
   track.style.cssText =
-    'width:100%;height:6px;background:rgba(229,231,235,0.9);border-radius:999px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);';
+    'width:100%;height:6px;background:rgba(229,231,235,0.9);border-radius:0;overflow:hidden;';
 
   const fill = document.createElement('div');
   fill.style.cssText =
@@ -1101,7 +1104,7 @@ function addInterpolationStatusControl() {
 
   const text = document.createElement('div');
   text.style.cssText =
-    'display:inline-flex;align-items:center;gap:6px;margin-top:8px;padding:8px 12px;background:rgba(15,23,42,0.88);color:#e5e7eb;border-radius:999px;font-size:13px;font-weight:600;box-shadow:0 2px 8px rgba(0,0,0,0.15);pointer-events:none;white-space:nowrap;max-width:100%;overflow:hidden;text-overflow:ellipsis;';
+    'width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 16px;background:rgba(15,23,42,0.9);color:#e5e7eb;border-radius:0;font-size:20px;font-weight:700;line-height:1.3;box-shadow:0 -2px 10px rgba(0,0,0,0.18);pointer-events:none;text-align:center;white-space:normal;';
   text.textContent = 'Loading Network Rail chainage points...';
 
   const srText = document.createElement('span');
