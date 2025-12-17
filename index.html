@@ -15,6 +15,23 @@
     body { font-family: "Inter", "Segoe UI", Arial, sans-serif; }
   </style>
   <script>
+    // Canonical domain: avoid multiple Vercel URLs confusing users.
+    // Note: Vercel may still keep the "extra" URL alive, but this will redirect traffic to the one you want.
+    (function () {
+      const CANONICAL_HOST = 'github-repository-gamma.vercel.app';
+      const UNWANTED_HOST = 'github-repository-plinios-projects-c209bcd0.vercel.app';
+      if (window.location.hostname === UNWANTED_HOST) {
+        const target =
+          window.location.protocol +
+          '//' +
+          CANONICAL_HOST +
+          window.location.pathname +
+          window.location.search +
+          window.location.hash;
+        window.location.replace(target);
+      }
+    })();
+
     // Mapbox token used by map.js
     window.MAPBOX_TOKEN = 'pk.eyJ1IjoicGxpbmlvLXBpY2NpbiIsImEiOiJjbWh0NWFwN20xOWIyMmtyNHJ1M3AyZXJzIn0.nv6q66EUGokaNIM92SK-1g';
   </script>
