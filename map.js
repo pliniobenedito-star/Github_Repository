@@ -970,7 +970,7 @@ geolocate.on('geolocate', (event) => {
     showNearestAccessPoint(lastUserLocation);
   }
   if (!navigationModeActive) {
-    updateInterpolationForLocation(lastUserLocation, 'Your location chainage');
+    updateInterpolationForLocation(lastUserLocation, 'Chainage');
   } else if (interpolationStatusEl) {
     interpolationStatusEl.style.display = 'none';
   }
@@ -1144,7 +1144,7 @@ async function loadChainagePoints() {
     chainagePointsByLine = new Map();
     setInterpolationStatus('Loading Network Rail chainage points from Mapbox tiles...');
     if (lastUserLocation) {
-      updateInterpolationForLocation(lastUserLocation, 'Your location chainage');
+      updateInterpolationForLocation(lastUserLocation, 'Chainage');
     } else if (!fallbackChainageShown) {
       const center = map.getCenter();
       const fallbackLocation = [center.lng, center.lat];
@@ -1712,7 +1712,7 @@ function setNavigationModeActive(active) {
     clearNavigationLayers();
     disableDeviceCompass();
     if (interpolationStatusEl) {
-      updateInterpolationForLocation(lastUserLocation ?? [map.getCenter().lng, map.getCenter().lat], 'Your location chainage');
+      updateInterpolationForLocation(lastUserLocation ?? [map.getCenter().lng, map.getCenter().lat], 'Chainage');
     }
   }
 }
@@ -1869,7 +1869,7 @@ function addInterpolationStatusControl() {
 
   const text = document.createElement('div');
   text.style.cssText =
-    'width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 16px;background:rgba(15,23,42,0.9);color:#e5e7eb;border-radius:0;font-size:20px;font-weight:700;line-height:1.3;box-shadow:0 -2px 10px rgba(0,0,0,0.18);pointer-events:none;text-align:center;white-space:normal;';
+    'width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 16px;background:rgba(15,23,42,0.9);color:#e5e7eb;border-radius:0;font-size:clamp(16px, 2.4vw, 20px);font-weight:700;line-height:1.3;box-shadow:0 -2px 10px rgba(0,0,0,0.18);pointer-events:none;text-align:center;white-space:normal;';
   text.textContent = 'Loading Network Rail chainage points...';
 
   const srText = document.createElement('span');
