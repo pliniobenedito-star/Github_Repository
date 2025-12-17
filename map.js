@@ -54,7 +54,7 @@ const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
 const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
 // Zoom handoff: zoomed out shows the overview tileset, zoomed in shows the detailed tileset (not both).
 // Mapbox layer visibility is: zoom >= minzoom and zoom < maxzoom.
-const RAIL_TILESET_SWITCH_ZOOM = 15;
+const RAIL_TILESET_SWITCH_ZOOM = 5;
 const TRACK_ID_MINZOOM = RAIL_TILESET_SWITCH_ZOOM;
 const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM + 1.5;
 const OVERVIEW_RAIL_TILESET_URL = 'mapbox://plinio-piccin.76fsxt78';
