@@ -1869,7 +1869,7 @@ function addInterpolationStatusControl() {
 
   const text = document.createElement('div');
   text.style.cssText =
-    'width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 16px;background:rgba(15,23,42,0.9);color:#e5e7eb;border-radius:0;font-size:clamp(16px, 2.4vw, 20px);font-weight:700;line-height:1.3;box-shadow:0 -2px 10px rgba(0,0,0,0.18);pointer-events:none;text-align:center;white-space:normal;';
+    'width:100%;display:flex;align-items:center;justify-content:center;gap:8px;padding:14px 16px;background:rgba(15,23,42,0.9);color:#e5e7eb;border-radius:0;font-size:clamp(32px, 4.8vw, 40px);font-weight:700;line-height:1.2;box-shadow:0 -2px 10px rgba(0,0,0,0.18);pointer-events:none;text-align:center;white-space:pre-line;';
   text.textContent = 'Loading Network Rail chainage points...';
 
   const srText = document.createElement('span');
@@ -1915,9 +1915,22 @@ function renderChainageInterpolationResult(result, contextLabel = 'Network Rail 
     setInterpolationStatus(`${contextLabel} not available near you.`);
     return;
   }
-  const chainText = formatMetersValue(result.chainMeters);
-  const milesYardsText = formatMilesAndYardsFromMeters(result.chainMeters);
-  setInterpolationStatus(`${contextLabel}: ${chainText} | ${milesYardsText}`);
+  const chainMetersRounded = Math.round(Number(result.chainMeters));
+  const metersText = Number.isFinite(chainMetersRounded) ? `${chainMetersRounded}m` : 'N/A';
+
+  const meters = Number(result.chainMeters);
+  let milesYardsText = 'N/A';
+  if (Number.isFinite(meters)) {
+    let miles = Math.floor(meters / METERS_PER_MILE);
+    let yards = Math.round((meters - miles * METERS_PER_MILE) / METERS_PER_YARD);
+    if (yards >= 1760) {
+      miles += 1;
+      yards -= 1760;
+    }
+    milesYardsText = `${miles} mile${miles === 1 ? '' : 's'} ${yards} Yards`;
+  }
+
+  setInterpolationStatus(`Chainage: ${metersText}\nMileage: ${milesYardsText}`);
 }
 
 function updateInterpolationForLocation(userLngLat, contextLabel = 'Network Rail chainage') {
