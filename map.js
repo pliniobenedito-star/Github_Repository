@@ -52,6 +52,9 @@ const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
 const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
 const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
 const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
+// Clamp the max tile zoom so the set of rendered features stays consistent as you zoom in.
+// This helps avoid the feeling that "more lines appear only when very close".
+const TRACK_ID_SOURCE_MAXZOOM = 8;
 // Show the detailed track-identification tileset from zoom 5 so you don't see "some lines"
 // at one zoom and "more lines" only when zoomed in very close.
 const TRACK_ID_MINZOOM = 5;
@@ -1393,7 +1396,8 @@ async function loadTrackIdentificationLines() {
     if (!map.getSource('track-identification')) {
       map.addSource('track-identification', {
         type: 'vector',
-        url: TRACK_ID_TILESET_URL
+        url: TRACK_ID_TILESET_URL,
+        maxzoom: TRACK_ID_SOURCE_MAXZOOM
       });
     }
 
@@ -1499,17 +1503,7 @@ async function loadTrackIdentificationLines() {
         },
         paint: {
           'line-color': '#1d4ed8',
-          'line-width': [
-            'interpolate',
-            ['linear'],
-            ['zoom'],
-            TRACK_ID_MINZOOM,
-            2.25,
-            TRACK_ID_MINZOOM + 2,
-            3.5,
-            TRACK_ID_MINZOOM + 4,
-            5
-          ],
+          'line-width': 3,
           'line-opacity': 0.9
         }
       });
