@@ -21,6 +21,25 @@ const map = new mapboxgl.Map({
   zoom: 15
 });
 
+// Local dev helper: show current zoom + which tileset should be visible.
+if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
+  const indicator = document.createElement('div');
+  indicator.id = 'rail-switch-indicator';
+  indicator.style.cssText =
+    'position:absolute;left:10px;bottom:70px;z-index:3;background:rgba(2,6,23,0.85);color:#e2e8f0;' +
+    'padding:6px 10px;border-radius:10px;font:600 12px/1.2 system-ui,Segoe UI,Arial;pointer-events:none;';
+  map.getContainer().appendChild(indicator);
+
+  const updateIndicator = () => {
+    const z = Number(map.getZoom());
+    const showOverview = Number.isFinite(z) ? z < RAIL_TILESET_SWITCH_ZOOM : true;
+    const mode = showOverview ? 'OVERVIEW (76fsxt78)' : 'DETAILED (akrtnldh)';
+    indicator.textContent = `Zoom ${Number.isFinite(z) ? z.toFixed(2) : 'n/a'} • ${mode} • switch=${RAIL_TILESET_SWITCH_ZOOM}`;
+  };
+  map.on('zoom', updateIndicator);
+  map.on('load', updateIndicator);
+}
+
 applyControlSizingOverrides();
 
 // Add a default navigation control (zoom buttons)
@@ -51,6 +70,27 @@ let chainagePointsReady = false;
 let lastChainageInterpolation = null;
 let chainageSourceReady = false;
 let fallbackChainageShown = false;
+let railReferenceFeatures = [];
+let railReferenceReady = false;
+
+let navigationModeActive = false;
+let navigationTarget = null;
+let navigationPanelEl = null;
+let navigationElrInput = null;
+let navigationMilesInput = null;
+let navigationYardsInput = null;
+let navigationStatusEl = null;
+let navigationArrowEl = null;
+let navigationArrowSvgEl = null;
+let navigationDistanceEl = null;
+let navigationBearingEl = null;
+let navigationHintEl = null;
+let navigationLastStatus = '';
+let navigationHeadingEl = null;
+let navigationCompassBtnEl = null;
+let navigationUseDeviceHeading = false;
+let navigationDeviceHeadingDeg = null;
+let navigationDeviceOrientationHandler = null;
 
 const CHAINAGE_TILESET_URL = 'mapbox://plinio-piccin.cmaat8tq';
 const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
@@ -59,14 +99,16 @@ const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
 const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
 // Zoom handoff: zoomed out shows the overview tileset, zoomed in shows the detailed tileset (not both).
 // Mapbox layer visibility is: zoom >= minzoom and zoom < maxzoom.
-const RAIL_TILESET_SWITCH_ZOOM = 5;
+const RAIL_TILESET_SWITCH_ZOOM = 18;
 const TRACK_ID_MINZOOM = RAIL_TILESET_SWITCH_ZOOM;
-const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM + 1.5;
+const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM;
 const OVERVIEW_RAIL_TILESET_URL = 'mapbox://plinio-piccin.76fsxt78';
 const OVERVIEW_RAIL_SOURCE_LAYER = 'railway_lines_wgs84-d26b87';
 const OVERVIEW_RAIL_MINZOOM = 0;
 const OVERVIEW_RAIL_MAXZOOM = RAIL_TILESET_SWITCH_ZOOM;
-const RAIL_REFERENCE_MAX_ZOOM = 13.9;
+// Keep the reference-line overlay visible until close to the overview→detailed switch,
+// otherwise it disappears around zoom ~14 and makes the switch look "wrong".
+const RAIL_REFERENCE_MAX_ZOOM = RAIL_TILESET_SWITCH_ZOOM - 0.1;
 
 function applyControlSizingOverrides() {
   const style = document.createElement('style');
@@ -133,6 +175,14 @@ function applyRailLinesVisibility() {
   const zoom = Number(map.getZoom());
   const showOverview = Number.isFinite(zoom) ? zoom < RAIL_TILESET_SWITCH_ZOOM : true;
   const showDetailed = Number.isFinite(zoom) ? zoom >= RAIL_TILESET_SWITCH_ZOOM : true;
+
+  if (typeof window !== 'undefined' && window.location?.hostname === 'localhost') {
+    console.debug(
+      `[rail-switch] zoom=${Number.isFinite(zoom) ? zoom.toFixed(2) : 'n/a'} ` +
+        `switch=${RAIL_TILESET_SWITCH_ZOOM} overview=${showOverview} detailed=${showDetailed} ` +
+        `railLinesVisible=${railLinesVisible}`
+    );
+  }
 
   const setVisibility = (layerId, isVisible) => {
     if (!map.getLayer(layerId)) return;
@@ -356,6 +406,54 @@ class NearestAccessControl {
   }
 }
 
+class NavigationToolControl {
+  onAdd(mapInstance) {
+    this._map = mapInstance;
+    const container = document.createElement('div');
+    container.className = 'mapboxgl-ctrl mapboxgl-ctrl-group';
+    container.style.marginTop = `${CUSTOM_MARGIN_SMALL}px`;
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.title = 'Navigation tool';
+    button.setAttribute('aria-label', 'Navigation tool');
+    button.style.padding = `${CUSTOM_PADDING}px`;
+    button.style.width = `${CUSTOM_CONTROL_SIZE}px`;
+    button.style.height = `${CUSTOM_CONTROL_SIZE}px`;
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.innerHTML = `
+      <svg width="${CUSTOM_ICON_SIZE}" height="${CUSTOM_ICON_SIZE}" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 3l8 18-8-5-8 5 8-18z" fill="#0f172a"></path>
+      </svg>
+    `;
+
+    const setActiveState = () => {
+      button.classList.toggle('active', navigationModeActive);
+      button.style.backgroundColor = navigationModeActive ? '#dbeafe' : '#fff';
+    };
+    setActiveState();
+
+    button.addEventListener('click', () => {
+      setNavigationModeActive(!navigationModeActive);
+      setActiveState();
+    });
+
+    container.appendChild(button);
+    this._button = button;
+    this._container = container;
+    return container;
+  }
+
+  onRemove() {
+    if (this._container?.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+    this._map = undefined;
+  }
+}
+
 async function fetchGeoJSONWithFallback(urls) {
   const errors = [];
   for (const url of urls) {
@@ -416,6 +514,15 @@ function toWebMercatorCoord(coord) {
   const x = (lon * Math.PI * WEB_MERCATOR_RADIUS) / 180;
   const y = WEB_MERCATOR_RADIUS * Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
   return [x, y];
+}
+
+function fromWebMercatorCoord(coord) {
+  if (!Array.isArray(coord) || coord.length < 2) return null;
+  const [x, y] = coord;
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const lon = (x * 180) / (Math.PI * WEB_MERCATOR_RADIUS);
+  const lat = (Math.atan(Math.exp(y / WEB_MERCATOR_RADIUS)) * 360) / Math.PI - 90;
+  return [lon, lat];
 }
 
 function flattenLineGeometry(geometry) {
@@ -619,6 +726,48 @@ function interpolateMileageFromPairs(pairs, ratio) {
   return pairs[pairs.length - 1].mileage;
 }
 
+function ratioForMileageFromPairs(pairs, mileage) {
+  if (!pairs?.length || !Number.isFinite(mileage)) return null;
+  const first = pairs[0];
+  const last = pairs[pairs.length - 1];
+  if (mileage <= first.mileage) return first.ratio;
+  if (mileage >= last.mileage) return last.ratio;
+
+  for (let i = 0; i < pairs.length - 1; i++) {
+    const current = pairs[i];
+    const next = pairs[i + 1];
+    const min = Math.min(current.mileage, next.mileage);
+    const max = Math.max(current.mileage, next.mileage);
+    if (mileage < min || mileage > max) continue;
+    const span = next.mileage - current.mileage;
+    if (span === 0) {
+      return next.ratio;
+    }
+    const localRatio = (mileage - current.mileage) / span;
+    return current.ratio + localRatio * (next.ratio - current.ratio);
+  }
+
+  return null;
+}
+
+function lngLatAtRatioOnFeature(feature, ratio) {
+  if (!Number.isFinite(ratio)) return null;
+  const segmentsData = getSegmentsForFeature(feature);
+  if (!segmentsData?.segments?.length || !segmentsData.totalLength) return null;
+  const along = Math.max(0, Math.min(1, ratio)) * segmentsData.totalLength;
+  for (const seg of segmentsData.segments) {
+    const segEnd = seg.start + seg.len;
+    if (along <= segEnd) {
+      const t = seg.len === 0 ? 0 : (along - seg.start) / seg.len;
+      const x = seg.ax + t * (seg.bx - seg.ax);
+      const y = seg.ay + t * (seg.by - seg.ay);
+      return fromWebMercatorCoord([x, y]);
+    }
+  }
+  const lastSeg = segmentsData.segments[segmentsData.segments.length - 1];
+  return fromWebMercatorCoord([lastSeg.bx, lastSeg.by]);
+}
+
 function mileageFromMileposts(feature, lngLat) {
   const props = feature?.properties || {};
   const elr = normalizeElr(props.ELR ?? props.elr);
@@ -643,6 +792,44 @@ function haversineDistance(lngLat1, lngLat2) {
     Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+function bearingDegrees(fromLngLat, toLngLat) {
+  if (!fromLngLat || !toLngLat) return null;
+  const toRad = (deg) => (deg * Math.PI) / 180;
+  const toDeg = (rad) => (rad * 180) / Math.PI;
+  const [lon1, lat1] = fromLngLat;
+  const [lon2, lat2] = toLngLat;
+  if (![lon1, lat1, lon2, lat2].every(Number.isFinite)) return null;
+  const phi1 = toRad(lat1);
+  const phi2 = toRad(lat2);
+  const dLon = toRad(lon2 - lon1);
+  const y = Math.sin(dLon) * Math.cos(phi2);
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(dLon);
+  let brng = toDeg(Math.atan2(y, x));
+  brng = (brng + 360) % 360;
+  return brng;
+}
+
+function compassLabel(degrees) {
+  if (!Number.isFinite(degrees)) return 'N/A';
+  const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const index = Math.round(degrees / 45) % 8;
+  return directions[index];
+}
+
+function normalizeDegrees(degrees) {
+  if (!Number.isFinite(degrees)) return null;
+  return ((degrees % 360) + 360) % 360;
+}
+
+function smallestTurnDegrees(fromDeg, toDeg) {
+  const from = normalizeDegrees(fromDeg);
+  const to = normalizeDegrees(toDeg);
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+  let delta = to - from;
+  delta = ((delta + 540) % 360) - 180; // [-180, 180)
+  return delta;
 }
 
 function ensureNearestAccessLayer() {
@@ -776,23 +963,34 @@ map.addControl(new RailLinesControl(), 'top-right');
 map.addControl(new MilepostControl(), 'top-right');
 map.addControl(new AccessPointsControl(), 'top-right');
 map.addControl(new NearestAccessControl(), 'top-right');
+map.addControl(new NavigationToolControl(), 'top-right');
 geolocate.on('geolocate', (event) => {
   lastUserLocation = [event.coords.longitude, event.coords.latitude];
   if (accessPointsReady && nearestAccessVisible && !nearestAccessShown) {
     showNearestAccessPoint(lastUserLocation);
   }
-  updateInterpolationForLocation(lastUserLocation, 'Your location chainage');
+  if (!navigationModeActive) {
+    updateInterpolationForLocation(lastUserLocation, 'Your location chainage');
+  } else if (interpolationStatusEl) {
+    interpolationStatusEl.style.display = 'none';
+  }
+  updateNavigationGuidance();
 });
 
 geolocate.on('error', () => {
-  setInterpolationStatus('Location unavailable. Tap the map to see chainage there, or enable location services.');
-  const center = map.getCenter();
-  const fallbackLocation = [center.lng, center.lat];
-  fallbackChainageShown = true;
-  updateInterpolationForLocation(
-    fallbackLocation,
-    'Map center chainage (tap map or enable location to update for you)'
-  );
+  if (!navigationModeActive) {
+    setInterpolationStatus('Location unavailable. Tap the map to see chainage there, or enable location services.');
+    const center = map.getCenter();
+    const fallbackLocation = [center.lng, center.lat];
+    fallbackChainageShown = true;
+    updateInterpolationForLocation(
+      fallbackLocation,
+      'Map center chainage (tap map or enable location to update for you)'
+    );
+  } else if (interpolationStatusEl) {
+    interpolationStatusEl.style.display = 'none';
+  }
+  updateNavigationGuidance();
 });
 
 function ensureOsgbProjection() {
@@ -959,6 +1157,563 @@ async function loadChainagePoints() {
   } catch (error) {
     console.error('Unable to load Network Rail chainage points from Mapbox tiles:', error);
     setInterpolationStatus('Unable to load Network Rail chainage points from Mapbox.');
+  }
+}
+
+function ensureNavigationLayers() {
+  if (!map.isStyleLoaded()) {
+    map.once('load', () => ensureNavigationLayers());
+    return;
+  }
+  if (!map.getSource('nav-target')) {
+    map.addSource('nav-target', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  }
+  if (!map.getSource('nav-route')) {
+    map.addSource('nav-route', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  }
+
+  if (!map.getLayer('nav-route-layer')) {
+    map.addLayer({
+      id: 'nav-route-layer',
+      type: 'line',
+      source: 'nav-route',
+      layout: { 'line-cap': 'round', 'line-join': 'round' },
+      paint: {
+        'line-color': '#f97316',
+        'line-width': 4,
+        'line-opacity': 0.9
+      }
+    });
+  }
+
+  if (!map.getLayer('nav-target-layer')) {
+    map.addLayer({
+      id: 'nav-target-layer',
+      type: 'circle',
+      source: 'nav-target',
+      paint: {
+        'circle-radius': 7,
+        'circle-color': '#ffffff',
+        'circle-stroke-color': '#f97316',
+        'circle-stroke-width': 3
+      }
+    });
+  }
+}
+
+function clearNavigationLayers() {
+  const targetSource = map.getSource('nav-target');
+  if (targetSource) {
+    targetSource.setData({ type: 'FeatureCollection', features: [] });
+  }
+  const routeSource = map.getSource('nav-route');
+  if (routeSource) {
+    routeSource.setData({ type: 'FeatureCollection', features: [] });
+  }
+}
+
+function ensureNavigationPanel() {
+  if (navigationPanelEl) return;
+
+  const panel = document.createElement('div');
+  panel.id = 'navigation-panel';
+  panel.style.cssText =
+    'position:absolute;left:0;right:0;bottom:0;z-index:5;pointer-events:auto;' +
+    'background:rgba(2,6,23,0.92);color:#e2e8f0;padding:14px 14px 16px;' +
+    'font-family:system-ui,Segoe UI,Arial;display:none;';
+
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;';
+
+  const title = document.createElement('div');
+  title.textContent = 'Navigation';
+  title.style.cssText = 'font-weight:800;font-size:18px;letter-spacing:0.2px;';
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.textContent = 'Close';
+  closeBtn.style.cssText =
+    'pointer-events:auto;border:1px solid rgba(148,163,184,0.35);background:rgba(15,23,42,0.8);' +
+    'color:#e2e8f0;border-radius:10px;padding:8px 12px;font-weight:700;';
+  closeBtn.addEventListener('click', () => setNavigationModeActive(false));
+
+  header.appendChild(title);
+  header.appendChild(closeBtn);
+
+  const formRow = document.createElement('div');
+  formRow.style.cssText = 'display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:10px;align-items:end;';
+
+  const buildField = (labelText, inputEl) => {
+    const wrap = document.createElement('div');
+    wrap.style.cssText = 'display:flex;flex-direction:column;gap:6px;';
+    const label = document.createElement('label');
+    label.textContent = labelText;
+    label.style.cssText = 'font-size:12px;font-weight:700;color:#cbd5e1;';
+    wrap.appendChild(label);
+    wrap.appendChild(inputEl);
+    return wrap;
+  };
+
+  const inputStyle =
+    'width:100%;box-sizing:border-box;border-radius:10px;border:1px solid rgba(148,163,184,0.35);' +
+    'background:rgba(15,23,42,0.85);color:#e2e8f0;padding:10px 10px;font-size:15px;font-weight:700;';
+
+  const elrInput = document.createElement('input');
+  elrInput.type = 'text';
+  elrInput.placeholder = 'e.g. ABC';
+  elrInput.autocomplete = 'off';
+  elrInput.inputMode = 'text';
+  elrInput.style.cssText = inputStyle;
+
+  const milesInput = document.createElement('input');
+  milesInput.type = 'number';
+  milesInput.min = '0';
+  milesInput.step = '1';
+  milesInput.placeholder = 'Miles';
+  milesInput.inputMode = 'numeric';
+  milesInput.style.cssText = inputStyle;
+
+  const yardsInput = document.createElement('input');
+  yardsInput.type = 'number';
+  yardsInput.min = '0';
+  yardsInput.step = '1';
+  yardsInput.placeholder = 'Yards';
+  yardsInput.inputMode = 'numeric';
+  yardsInput.style.cssText = inputStyle;
+
+  const goBtn = document.createElement('button');
+  goBtn.type = 'button';
+  goBtn.textContent = 'Go';
+  goBtn.style.cssText =
+    'pointer-events:auto;border:none;background:#f97316;color:#0b1220;border-radius:12px;' +
+    'padding:12px 14px;font-weight:900;font-size:15px;';
+
+  formRow.appendChild(buildField('ELR', elrInput));
+  formRow.appendChild(buildField('Miles', milesInput));
+  formRow.appendChild(buildField('Yards', yardsInput));
+  formRow.appendChild(goBtn);
+
+  const status = document.createElement('div');
+  status.style.cssText = 'margin-top:12px;font-size:14px;font-weight:700;color:#e2e8f0;';
+  status.textContent = 'Enter an ELR and mileage to start.';
+
+  const guidance = document.createElement('div');
+  guidance.style.cssText =
+    'margin-top:10px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;' +
+    'border-top:1px solid rgba(148,163,184,0.18);padding-top:12px;';
+
+  const arrow = document.createElement('div');
+  arrow.style.cssText =
+    'width:46px;height:46px;border-radius:999px;background:rgba(15,23,42,0.85);' +
+    'display:flex;align-items:center;justify-content:center;border:1px solid rgba(148,163,184,0.25);';
+  arrow.innerHTML = `
+    <svg width="26" height="26" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M12 2l7 20-7-5-7 5 7-20z" fill="#f97316"></path>
+    </svg>
+  `;
+  const arrowSvg = arrow.querySelector('svg');
+  if (arrowSvg) {
+    arrowSvg.style.transformOrigin = '50% 50%';
+    arrowSvg.style.willChange = 'transform';
+  }
+
+  const metrics = document.createElement('div');
+  metrics.style.cssText = 'display:flex;flex-direction:column;gap:4px;min-width:220px;';
+
+  const distanceEl = document.createElement('div');
+  distanceEl.style.cssText = 'font-size:20px;font-weight:900;';
+  distanceEl.textContent = '-- m';
+
+  const bearingEl = document.createElement('div');
+  bearingEl.style.cssText = 'font-size:14px;font-weight:700;color:#cbd5e1;';
+  bearingEl.textContent = 'Bearing: --';
+
+  const headingRow = document.createElement('div');
+  headingRow.style.cssText = 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:2px;';
+
+  const headingEl = document.createElement('div');
+  headingEl.style.cssText = 'font-size:13px;font-weight:800;color:#94a3b8;';
+  headingEl.textContent = 'Compass: off';
+
+  const compassBtn = document.createElement('button');
+  compassBtn.type = 'button';
+  compassBtn.textContent = 'Enable compass (beta)';
+  compassBtn.style.cssText =
+    'pointer-events:auto;border:1px solid rgba(148,163,184,0.35);background:rgba(15,23,42,0.8);' +
+    'color:#e2e8f0;border-radius:10px;padding:7px 10px;font-weight:800;font-size:12px;';
+  compassBtn.addEventListener('click', () => toggleDeviceCompass());
+
+  headingRow.appendChild(headingEl);
+  headingRow.appendChild(compassBtn);
+
+  const hint = document.createElement('div');
+  hint.style.cssText = 'font-size:12px;font-weight:700;color:#94a3b8;max-width:520px;';
+  hint.textContent =
+    'Tip: allow location services, or click the map to simulate your position. Compass needs sensor permission (mobile/HTTPS).';
+
+  metrics.appendChild(distanceEl);
+  metrics.appendChild(bearingEl);
+  metrics.appendChild(headingRow);
+  metrics.appendChild(hint);
+  guidance.appendChild(arrow);
+  guidance.appendChild(metrics);
+
+  const submit = () => runNavigationSearch();
+  goBtn.addEventListener('click', submit);
+  [elrInput, milesInput, yardsInput].forEach((input) => {
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        submit();
+      }
+    });
+  });
+
+  panel.appendChild(header);
+  panel.appendChild(formRow);
+  panel.appendChild(status);
+  panel.appendChild(guidance);
+
+  navigationPanelEl = panel;
+  navigationElrInput = elrInput;
+  navigationMilesInput = milesInput;
+  navigationYardsInput = yardsInput;
+  navigationStatusEl = status;
+  navigationArrowEl = arrow;
+  navigationArrowSvgEl = arrowSvg ?? null;
+  navigationDistanceEl = distanceEl;
+  navigationBearingEl = bearingEl;
+  navigationHintEl = hint;
+  navigationHeadingEl = headingEl;
+  navigationCompassBtnEl = compassBtn;
+
+  map.getContainer().appendChild(panel);
+}
+
+function setNavigationStatus(message) {
+  navigationLastStatus = message || '';
+  if (navigationStatusEl) {
+    navigationStatusEl.textContent = navigationLastStatus;
+  }
+}
+
+function parseMilesYards(milesRaw, yardsRaw) {
+  const miles = Number(milesRaw);
+  let yards = Number(yardsRaw);
+  if (!Number.isFinite(miles) || miles < 0) return null;
+  if (!Number.isFinite(yards) || yards < 0) yards = 0;
+  const extraMiles = Math.floor(yards / 1760);
+  const remainingYards = yards - extraMiles * 1760;
+  return { miles: miles + extraMiles, yards: remainingYards, milesDec: miles + extraMiles + remainingYards / 1760 };
+}
+
+function pickRailReferenceFeatureForMileage(elr, milesDec) {
+  const normalized = normalizeElr(elr);
+  if (!normalized || !railReferenceFeatures?.length || !Number.isFinite(milesDec)) return null;
+  const candidates = railReferenceFeatures
+    .filter((feature) => normalizeElr(feature?.properties?.ELR ?? feature?.properties?.elr) === normalized)
+    .map((feature) => {
+      const props = feature?.properties || {};
+      const start = Number(props.L_M_FROM ?? props.l_m_from);
+      const end = Number(props.L_M_TO ?? props.l_m_to);
+      const hasRange = Number.isFinite(start) && Number.isFinite(end) && start !== end;
+      const min = hasRange ? Math.min(start, end) : null;
+      const max = hasRange ? Math.max(start, end) : null;
+      const within = hasRange ? milesDec >= min && milesDec <= max : true;
+      const span = hasRange ? Math.abs(end - start) : Number.POSITIVE_INFINITY;
+      const proximity = lastUserLocation ? Number(projectAlongFeature(feature, lastUserLocation)?.dist) : null;
+      return { feature, within, span, start, end, hasRange, proximity };
+    })
+    .filter((entry) => entry.within);
+
+  if (!candidates.length) return null;
+  candidates.sort((a, b) => {
+    const aProx = Number.isFinite(a.proximity) ? a.proximity : Number.POSITIVE_INFINITY;
+    const bProx = Number.isFinite(b.proximity) ? b.proximity : Number.POSITIVE_INFINITY;
+    if (aProx !== bProx) return aProx - bProx;
+    return a.span - b.span;
+  });
+  return candidates[0];
+}
+
+function findTargetForElrMileage(elr, milesDec) {
+  const picked = pickRailReferenceFeatureForMileage(elr, milesDec);
+  if (!picked?.feature) return null;
+
+  const feature = picked.feature;
+  const props = feature?.properties || {};
+  const startMileage = Number(props.L_M_FROM ?? props.l_m_from);
+  const endMileage = Number(props.L_M_TO ?? props.l_m_to);
+  const hasLinearRange = Number.isFinite(startMileage) && Number.isFinite(endMileage) && startMileage !== endMileage;
+
+  const elrNorm = normalizeElr(props.ELR ?? props.elr) || normalizeElr(elr);
+  const posts = elrNorm ? milepostChainageIndex.get(elrNorm) : undefined;
+  const calibration = ensureChainageCalibration(feature, posts);
+
+  let ratio = null;
+  if (calibration?.pairs?.length) {
+    ratio = ratioForMileageFromPairs(calibration.pairs, milesDec);
+  }
+  if (!Number.isFinite(ratio) && hasLinearRange) {
+    ratio = (milesDec - startMileage) / (endMileage - startMileage);
+  }
+  if (!Number.isFinite(ratio)) return null;
+
+  const lngLat = lngLatAtRatioOnFeature(feature, ratio);
+  if (!lngLat) return null;
+
+  return { lngLat, feature, ratio, startMileage, endMileage };
+}
+
+function updateNavigationOverlays() {
+  if (!navigationModeActive || !navigationTarget?.lngLat) {
+    clearNavigationLayers();
+    return;
+  }
+
+  const targetLngLat = navigationTarget.lngLat;
+  const targetFeature = {
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: targetLngLat },
+    properties: { elr: navigationTarget.elr || '', miles: navigationTarget.milesDec }
+  };
+  const targetSource = map.getSource('nav-target');
+  if (targetSource) {
+    targetSource.setData({ type: 'FeatureCollection', features: [targetFeature] });
+  }
+
+  const routeSource = map.getSource('nav-route');
+  if (routeSource && lastUserLocation) {
+    routeSource.setData({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          geometry: { type: 'LineString', coordinates: [lastUserLocation, targetLngLat] },
+          properties: {}
+        }
+      ]
+    });
+  } else if (routeSource) {
+    routeSource.setData({ type: 'FeatureCollection', features: [] });
+  }
+}
+
+function updateNavigationGuidance() {
+  if (!navigationModeActive) return;
+  if (!navigationTarget?.lngLat) {
+    if (navigationDistanceEl) navigationDistanceEl.textContent = '-- m';
+    if (navigationBearingEl) navigationBearingEl.textContent = 'Bearing: --';
+    if (navigationHeadingEl) navigationHeadingEl.textContent = navigationUseDeviceHeading ? 'Compass: waiting...' : 'Compass: off';
+    return;
+  }
+
+  if (!lastUserLocation) {
+    setNavigationStatus(`${navigationLastStatus || 'Target ready.'} (Waiting for your location...)`);
+    updateNavigationOverlays();
+    return;
+  }
+
+  const targetLngLat = navigationTarget.lngLat;
+  const distanceMeters = haversineDistance(lastUserLocation, targetLngLat);
+  const bearing = bearingDegrees(lastUserLocation, targetLngLat);
+  const label = compassLabel(bearing);
+
+  if (navigationDistanceEl) {
+    navigationDistanceEl.textContent = Number.isFinite(distanceMeters) ? `${Math.round(distanceMeters)} m` : '-- m';
+  }
+  if (navigationBearingEl) {
+    navigationBearingEl.textContent = Number.isFinite(bearing) ? `Bearing: ${bearing.toFixed(0)}° (${label})` : 'Bearing: --';
+  }
+  const heading = navigationUseDeviceHeading ? normalizeDegrees(navigationDeviceHeadingDeg) : null;
+  if (navigationHeadingEl) {
+    if (!navigationUseDeviceHeading) {
+      navigationHeadingEl.textContent = 'Compass: off';
+    } else if (Number.isFinite(heading)) {
+      navigationHeadingEl.textContent = `Heading: ${heading.toFixed(0)}° (${compassLabel(heading)})`;
+    } else {
+      navigationHeadingEl.textContent = 'Compass: waiting...';
+    }
+  }
+
+  const arrowDegrees = (() => {
+    if (!Number.isFinite(bearing)) return null;
+    if (navigationUseDeviceHeading && Number.isFinite(heading)) {
+      // Arrow is relative to where the phone is pointing (Garmin-style).
+      const turn = smallestTurnDegrees(heading, bearing);
+      return Number.isFinite(turn) ? turn : null;
+    }
+    // Fallback: absolute bearing (north-up).
+    return bearing;
+  })();
+  if (navigationArrowSvgEl) {
+    const rotation = Number.isFinite(arrowDegrees) ? `rotate(${arrowDegrees}deg)` : 'rotate(0deg)';
+    navigationArrowSvgEl.style.transform = rotation;
+  } else if (navigationArrowEl) {
+    const rotation = Number.isFinite(arrowDegrees) ? `rotate(${arrowDegrees}deg)` : 'rotate(0deg)';
+    navigationArrowEl.style.transform = rotation;
+  }
+
+  updateNavigationOverlays();
+}
+
+function deviceCompassIsAvailable() {
+  return typeof window !== 'undefined' && typeof window.DeviceOrientationEvent !== 'undefined';
+}
+
+function setCompassButtonState() {
+  if (!navigationCompassBtnEl) return;
+  if (!deviceCompassIsAvailable()) {
+    navigationCompassBtnEl.disabled = true;
+    navigationCompassBtnEl.textContent = 'Compass not supported';
+    navigationCompassBtnEl.style.opacity = '0.65';
+    return;
+  }
+  navigationCompassBtnEl.disabled = false;
+  navigationCompassBtnEl.style.opacity = '1';
+  navigationCompassBtnEl.textContent = navigationUseDeviceHeading ? 'Disable compass' : 'Enable compass (beta)';
+}
+
+async function enableDeviceCompass() {
+  if (!deviceCompassIsAvailable()) {
+    setNavigationStatus('Compass not supported on this device/browser.');
+    return false;
+  }
+
+  try {
+    // iOS Safari requires explicit permission inside a user gesture.
+    if (typeof window.DeviceOrientationEvent?.requestPermission === 'function') {
+      const result = await window.DeviceOrientationEvent.requestPermission();
+      if (result !== 'granted') {
+        setNavigationStatus('Compass permission denied.');
+        return false;
+      }
+    }
+  } catch (error) {
+    setNavigationStatus('Unable to enable compass permission.');
+    console.warn('Compass permission error:', error);
+    return false;
+  }
+
+  navigationUseDeviceHeading = true;
+  navigationDeviceHeadingDeg = null;
+
+  if (!navigationDeviceOrientationHandler) {
+    navigationDeviceOrientationHandler = (event) => {
+      let heading = null;
+      if (event && typeof event.webkitCompassHeading === 'number') {
+        heading = event.webkitCompassHeading;
+      } else if (event && Number.isFinite(event.alpha)) {
+        // Best-effort: many browsers report alpha clockwise from north when absolute is true.
+        // If not absolute, this may be relative to device start orientation.
+        heading = 360 - event.alpha;
+      }
+      heading = normalizeDegrees(heading);
+      if (!Number.isFinite(heading)) return;
+      navigationDeviceHeadingDeg = heading;
+      updateNavigationGuidance();
+    };
+  }
+
+  // Prefer absolute orientation events when available.
+  window.addEventListener('deviceorientationabsolute', navigationDeviceOrientationHandler, true);
+  window.addEventListener('deviceorientation', navigationDeviceOrientationHandler, true);
+  setCompassButtonState();
+  updateNavigationGuidance();
+  return true;
+}
+
+function disableDeviceCompass() {
+  navigationUseDeviceHeading = false;
+  navigationDeviceHeadingDeg = null;
+  if (typeof window !== 'undefined' && navigationDeviceOrientationHandler) {
+    window.removeEventListener('deviceorientationabsolute', navigationDeviceOrientationHandler, true);
+    window.removeEventListener('deviceorientation', navigationDeviceOrientationHandler, true);
+  }
+  setCompassButtonState();
+  updateNavigationGuidance();
+}
+
+function toggleDeviceCompass() {
+  if (navigationUseDeviceHeading) {
+    disableDeviceCompass();
+    return;
+  }
+  enableDeviceCompass();
+}
+
+function runNavigationSearch() {
+  ensureNavigationLayers();
+  ensureNavigationPanel();
+
+  const elr = navigationElrInput?.value || '';
+  const parsed = parseMilesYards(navigationMilesInput?.value, navigationYardsInput?.value);
+  if (!normalizeElr(elr)) {
+    setNavigationStatus('Enter a valid ELR (e.g. ABC).');
+    navigationTarget = null;
+    updateNavigationGuidance();
+    return;
+  }
+  if (!parsed) {
+    setNavigationStatus('Enter miles (required) and yards (optional).');
+    navigationTarget = null;
+    updateNavigationGuidance();
+    return;
+  }
+  if (!railReferenceReady) {
+    setNavigationStatus('Rail reference lines are still loading. Try again in a moment.');
+    navigationTarget = null;
+    updateNavigationGuidance();
+    return;
+  }
+
+  const result = findTargetForElrMileage(elr, parsed.milesDec);
+  if (!result?.lngLat) {
+    setNavigationStatus(`No match found for ELR ${normalizeElr(elr)} at ${parsed.miles}m ${String(parsed.yards).padStart(4, '0')}yds.`);
+    navigationTarget = null;
+    updateNavigationGuidance();
+    return;
+  }
+
+  navigationTarget = {
+    elr: normalizeElr(elr),
+    milesDec: parsed.milesDec,
+    miles: parsed.miles,
+    yards: parsed.yards,
+    lngLat: result.lngLat,
+    featureId: getFeatureKey(result.feature) ?? null
+  };
+
+  setNavigationStatus(
+    `Target set: ELR ${navigationTarget.elr} @ ${navigationTarget.miles}m ${String(navigationTarget.yards).padStart(4, '0')}yds`
+  );
+  updateNavigationGuidance();
+  map.easeTo({ center: navigationTarget.lngLat, zoom: Math.max(map.getZoom(), TRACK_ID_MINZOOM), duration: 650 });
+}
+
+function setNavigationModeActive(active) {
+  navigationModeActive = Boolean(active);
+  ensureNavigationPanel();
+  setCompassButtonState();
+  if (navigationPanelEl) {
+    navigationPanelEl.style.display = navigationModeActive ? 'block' : 'none';
+  }
+
+  if (navigationModeActive) {
+    if (interpolationStatusEl) interpolationStatusEl.style.display = 'none';
+    ensureNavigationLayers();
+    setNavigationStatus(navigationLastStatus || 'Enter an ELR and mileage to start.');
+    updateNavigationGuidance();
+    if (navigationElrInput) {
+      navigationElrInput.focus();
+    }
+  } else {
+    navigationTarget = null;
+    clearNavigationLayers();
+    disableDeviceCompass();
+    if (interpolationStatusEl) {
+      updateInterpolationForLocation(lastUserLocation ?? [map.getCenter().lng, map.getCenter().lat], 'Your location chainage');
+    }
   }
 }
 
@@ -1177,7 +1932,7 @@ function updateInterpolationForLocation(userLngLat, contextLabel = 'Network Rail
 
   const refreshed = refreshChainagePointsNear(userLngLat);
   if (!refreshed) {
-    setInterpolationStatus('Network Rail chainage points are still loading from Mapbox tiles...');
+    setInterpolationStatus('Network Rail chainage loading');
     map.once('idle', () => {
       updateInterpolationForLocation(userLngLat, contextLabel);
     });
@@ -1665,6 +2420,9 @@ async function loadRailReferenceLines() {
       data: geojson
     });
 
+    railReferenceFeatures = geojson.features || [];
+    railReferenceReady = railReferenceFeatures.length > 0;
+
     map.addLayer({
       id: 'rail-reference-lines-layer',
       type: 'line',
@@ -1757,6 +2515,8 @@ async function loadRailReferenceLines() {
     });
   } catch (error) {
     console.error('Unable to load rail reference lines:', error);
+    railReferenceFeatures = [];
+    railReferenceReady = false;
   }
 }
 
@@ -1777,7 +2537,12 @@ map.on('load', () => {
   // Clicking anywhere simulates a GPS fix and refreshes interpolation overlays.
   map.on('click', (event) => {
     lastUserLocation = [event.lngLat.lng, event.lngLat.lat];
-    updateInterpolationForLocation(lastUserLocation, 'Chainage at clicked point');
+    if (!navigationModeActive) {
+      updateInterpolationForLocation(lastUserLocation, 'Chainage at clicked point');
+    } else if (interpolationStatusEl) {
+      interpolationStatusEl.style.display = 'none';
+    }
+    updateNavigationGuidance();
   });
 });
 

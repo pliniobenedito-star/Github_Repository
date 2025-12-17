@@ -45,6 +45,24 @@
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
+        const isLocalhost =
+          window.location.hostname === 'localhost' ||
+          window.location.hostname === '127.0.0.1' ||
+          window.location.hostname === '[::1]';
+        if (isLocalhost) {
+          console.log('Service worker disabled on localhost (dev mode).');
+          // If you previously loaded this site with the service worker enabled,
+          // it may still be controlling localhost and serving cached files.
+          // Unregister + clear caches to ensure you see the latest local changes.
+          if (navigator.serviceWorker.getRegistrations) {
+            navigator.serviceWorker.getRegistrations().then((regs) => regs.forEach((reg) => reg.unregister()));
+          }
+          if (window.caches?.keys) {
+            window.caches.keys().then((keys) => keys.forEach((key) => window.caches.delete(key)));
+          }
+          return;
+        }
+
         navigator.serviceWorker
           // Use a relative URL so GitHub Pages deployments under /<repo>/ work.
           .register('service-worker.js')
