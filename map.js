@@ -52,14 +52,13 @@ const CHAINAGE_SOURCE_LAYER = 'NR_pts_wgs84-d5a8vl';
 const CHAINAGE_SEARCH_RADIUS_METERS = 10000;
 const TRACK_ID_TILESET_URL = 'mapbox://plinio-piccin.akrtnldh';
 const TRACK_ID_SOURCE_LAYER = 'NetworkLinks_wgs84-5ofi5m';
-// Switch to the detailed track-identification tileset only when zoomed in close.
-// (Keeps the overview tileset visible for longer while zooming in.)
-// Your map opens around zoom 15; setting this to 20 means the switch happens ~5 zoom levels later.
-const TRACK_ID_MINZOOM = 20;
-const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM + 1.5;
+// Show the detailed track-identification tileset from zoom 5 so you don't see "some lines"
+// at one zoom and "more lines" only when zoomed in very close.
+const TRACK_ID_MINZOOM = 5;
+const TRACK_ID_LABEL_MINZOOM = TRACK_ID_MINZOOM;
 const OVERVIEW_RAIL_TILESET_URL = 'mapbox://plinio-piccin.76fsxt78';
 const OVERVIEW_RAIL_SOURCE_LAYER = 'railway_lines_wgs84-d26b87';
-const OVERVIEW_RAIL_MINZOOM = 6;
+const OVERVIEW_RAIL_MINZOOM = 0;
 const OVERVIEW_RAIL_MAXZOOM = TRACK_ID_MINZOOM - 0.1;
 const RAIL_REFERENCE_MAX_ZOOM = 13.9;
 
@@ -1610,12 +1609,8 @@ async function loadOverviewRailLines() {
             ['zoom'],
             OVERVIEW_RAIL_MINZOOM,
             1.1,
-            10,
-            2.25,
-            12.5,
-            3.4,
             OVERVIEW_RAIL_MAXZOOM,
-            3.75
+            2.1
           ],
           'line-opacity': 0.8
         }

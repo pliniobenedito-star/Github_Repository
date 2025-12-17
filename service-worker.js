@@ -1,4 +1,4 @@
-const CACHE_NAME = 'rail-chainage-pwa-v9';
+const CACHE_NAME = 'rail-chainage-pwa-v10';
 
 const SCOPE_URL = self.registration?.scope ?? self.location.href;
 const SCOPE_PATH = new URL(SCOPE_URL).pathname;
@@ -43,6 +43,33 @@ self.addEventListener('fetch', (event) => {
 
   event.respondWith(
     caches.match(request).then(async (cached) => {
+      const isNavigation = request.mode === 'navigate' || request.destination === 'document';
+      const isAppShell =
+        isNavigation ||
+        url.pathname.endsWith('/index.html') ||
+        url.pathname.endsWith('/map.js') ||
+        url.pathname.endsWith('/manifest.webmanifest');
+      const isDataFile =
+        url.pathname.endsWith('.geojson') || url.pathname.endsWith('.csv') || url.pathname.endsWith('.json');
+
+      // Prefer fresh content for the app shell and local data files so changes show up quickly after deploy.
+      if (isAppShell || isDataFile) {
+        try {
+          const response = await fetch(request);
+          const clone = response.clone();
+          caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+          return response;
+        } catch (error) {
+          if (cached) return cached;
+          const isScopeRoot = url.pathname === SCOPE_PATH || url.pathname === `${SCOPE_PATH}index.html`;
+          if (isNavigation || isScopeRoot) {
+            return caches.match(INDEX_URL);
+          }
+          return caches.match(request);
+        }
+      }
+
+      // Cache-first for static assets.
       if (cached) return cached;
       try {
         const response = await fetch(request);
@@ -50,12 +77,7 @@ self.addEventListener('fetch', (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
         return response;
       } catch (error) {
-        const isNavigation = request.mode === 'navigate' || request.destination === 'document';
-        const isScopeRoot = url.pathname === SCOPE_PATH || url.pathname === `${SCOPE_PATH}index.html`;
-        if (isNavigation || isScopeRoot) {
-          return caches.match(INDEX_URL);
-        }
-        return caches.match(request);
+        return cached;
       }
     })
   );
