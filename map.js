@@ -374,6 +374,16 @@ async function fetchGeoJSONIfAvailable(url) {
   return null;
 }
 
+function resolveStaticAssetUrl(path) {
+  if (!path) return path;
+  try {
+    return new URL(path, window.location.href).toString();
+  } catch (error) {
+    console.warn('Unable to resolve asset URL:', path, error);
+    return path;
+  }
+}
+
 const WEB_MERCATOR_RADIUS = 6378137;
 const METERS_PER_MILE = 1609.344;
 const METERS_PER_YARD = 0.9144;
@@ -1619,8 +1629,8 @@ async function loadRailReferenceLines() {
   try {
     console.log('Loading rail reference lines.');
     const { data: rawGeojson, url } = await fetchGeoJSONWithFallback([
-      '/chainage-strings.geojson',
-      '/Rail_reference_line.geojson'
+      resolveStaticAssetUrl('chainage-strings.geojson'),
+      resolveStaticAssetUrl('Rail_reference_line.geojson')
     ]);
     const shouldReproject = !url.includes('chainage-strings.geojson');
     const geojson = shouldReproject ? reprojectRailGeoJSONToWgs84(rawGeojson) : rawGeojson;

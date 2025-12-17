@@ -29,7 +29,8 @@
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
         navigator.serviceWorker
-          .register('/service-worker.js')
+          // Use a relative URL so GitHub Pages deployments under /<repo>/ work.
+          .register('service-worker.js')
           .then(() => console.log('Service worker registered'))
           .catch((err) => console.error('Service worker registration failed:', err));
       });
