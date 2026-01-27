@@ -1218,9 +1218,10 @@ function ensureNavigationPanel() {
   const panel = document.createElement('div');
   panel.id = 'navigation-panel';
   panel.style.cssText =
-    'position:absolute;left:0;right:0;bottom:0;z-index:5;pointer-events:auto;' +
+    'position:absolute;left:50%;bottom:0;z-index:5;pointer-events:auto;transform:translateX(-50%);' +
     'background:rgba(2,6,23,0.92);color:#e2e8f0;padding:14px 14px 16px;' +
-    'font-family:system-ui,Segoe UI,Arial;display:none;';
+    'font-family:system-ui,Segoe UI,Arial;display:none;width:calc(100% - 16px);max-width:960px;' +
+    'box-sizing:border-box;max-height:calc(100vh - 20px);overflow-y:auto;';
 
   const header = document.createElement('div');
   header.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px;';
@@ -1241,7 +1242,8 @@ function ensureNavigationPanel() {
   header.appendChild(closeBtn);
 
   const formRow = document.createElement('div');
-  formRow.style.cssText = 'display:grid;grid-template-columns:1.2fr 1fr 1fr auto;gap:10px;align-items:end;';
+  formRow.style.cssText =
+    'display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;align-items:end;';
 
   const buildField = (labelText, inputEl) => {
     const wrap = document.createElement('div');
@@ -1286,7 +1288,7 @@ function ensureNavigationPanel() {
   goBtn.textContent = 'Go';
   goBtn.style.cssText =
     'pointer-events:auto;border:none;background:#f97316;color:#0b1220;border-radius:12px;' +
-    'padding:12px 14px;font-weight:900;font-size:15px;';
+    'padding:12px 14px;font-weight:900;font-size:15px;width:100%;';
 
   formRow.appendChild(buildField('ELR', elrInput));
   formRow.appendChild(buildField('Miles', milesInput));
@@ -1691,6 +1693,13 @@ function runNavigationSearch() {
   map.easeTo({ center: navigationTarget.lngLat, zoom: Math.max(map.getZoom(), TRACK_ID_MINZOOM), duration: 650 });
 }
 
+function shouldAutofocusNavigationInputs() {
+  if (typeof window === 'undefined') return true;
+  const prefersCoarsePointer = typeof window.matchMedia === 'function' && window.matchMedia('(pointer:coarse)').matches;
+  const hasTouch = typeof navigator !== 'undefined' && Number(navigator.maxTouchPoints) > 0;
+  return !(prefersCoarsePointer || hasTouch);
+}
+
 function setNavigationModeActive(active) {
   navigationModeActive = Boolean(active);
   ensureNavigationPanel();
@@ -1704,7 +1713,7 @@ function setNavigationModeActive(active) {
     ensureNavigationLayers();
     setNavigationStatus(navigationLastStatus || 'Enter an ELR and mileage to start.');
     updateNavigationGuidance();
-    if (navigationElrInput) {
+    if (navigationElrInput && shouldAutofocusNavigationInputs()) {
       navigationElrInput.focus();
     }
   } else {
